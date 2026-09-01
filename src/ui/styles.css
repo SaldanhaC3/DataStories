@@ -182,7 +182,14 @@ textarea {
 
 .stage-canvas {
   position: relative;
-  max-width: 100%;
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  justify-content: center;
+}
+
+.stage-canvas .canvas-shell {
+  width: 100%;
 }
 
 .empty-overlay {

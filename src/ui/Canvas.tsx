@@ -304,7 +304,7 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
   )
 
   return (
-    <div className="canvas-shell" style={{ width: `min(100%, ${scene.width}px)` }}>
+    <div className="canvas-shell" style={{ width: `min(100%, max(${scene.width}px, 72vw))` }}>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${scene.width} ${scene.height}`}
