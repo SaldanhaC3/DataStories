@@ -7,25 +7,58 @@
  */
 
 :root {
-  --bg: #eef0f3;
+  --bg: #f2f4f6;
   --panel: #ffffff;
   --panel-alt: #f7f8fa;
-  --border: #e0e4e9;
-  --border-strong: #cbd2da;
-  --text: #16191d;
-  --muted: #6b7280;
-  --muted-soft: #9aa1ab;
+  --border: #e3e7ec;
+  --border-strong: #c9d1da;
+  --text: #14181d;
+  --muted: #5f6873;
+  --muted-soft: #98a1ac;
   --accent: #1a6ba8;
   --accent-soft: #e7f0f7;
   --danger: #b3261e;
   --warn: #9a6700;
   --ok: #1a7f4b;
-  --radius: 7px;
-  --radius-sm: 5px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 6px 20px rgba(16, 24, 40, 0.06);
+  --ok-soft: #e8f5ee;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.07);
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, monospace;
+}
+
+/* Alvos de teclado ganham anel visível; mouse, não. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Barras de rolagem discretas, que não competem com o conteúdo. */
+.panel-body::-webkit-scrollbar,
+.grid-wrap::-webkit-scrollbar,
+.code::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.panel-body::-webkit-scrollbar-thumb,
+.grid-wrap::-webkit-scrollbar-thumb,
+.code::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid var(--panel);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 * {
@@ -126,18 +159,33 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
 .step-tab span.n {
-  font-size: 10px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--muted-soft);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-alt);
+  transition: all 0.18s ease;
+}
+
+.step-tab span.n.done {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 .step-tab:hover {
   color: var(--text);
+  background: rgba(0, 0, 0, 0.015);
 }
 
 .step-tab[aria-selected='true'] {
@@ -146,7 +194,15 @@ textarea {
 }
 
 .step-tab[aria-selected='true'] span.n {
-  color: var(--accent);
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.step-tab[aria-selected='true'] span.n.done {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
 }
 
 .panel-body {
@@ -818,14 +874,40 @@ table.data-grid th.th-hidden input {
   display: block;
 }
 
+.panel-next {
+  position: sticky;
+  bottom: -16px;
+  margin: 6px -16px -16px;
+  padding: 12px 16px;
+  background: linear-gradient(to top, var(--panel) 55%, rgba(255, 255, 255, 0));
+  border-top: 1px solid var(--border);
+}
+
+.panel-next .next {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 13.5px;
+}
+
 /* ---------------------------------------------------------------- diversos */
 
 .stage-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+.stage-toolbar .chip {
+  padding: 3px 12px;
+  font-size: 12px;
+}
+
+.toolbar-meta {
+  font-variant-numeric: tabular-nums;
 }
 
 .stage-toolbar input[type='number'] {

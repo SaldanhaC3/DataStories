@@ -27,6 +27,15 @@ const STEPS: Array<{ id: Step; n: string; label: string }> = [
   { id: 'publicar', n: '4', label: 'Publicar' },
 ]
 
+const STEP_ORDER: Step[] = ['dados', 'grafico', 'anotar', 'publicar']
+
+/** Larguras de preview, no espírito do teste responsivo do Datawrapper. */
+const PREVIEW_WIDTHS: Array<{ id: string; label: string; maxWidth: number | null }> = [
+  { id: 'auto', label: 'Responsivo', maxWidth: null },
+  { id: 'article', label: 'Artigo 760', maxWidth: 760 },
+  { id: 'mobile', label: 'Mobile 380', maxWidth: 380 },
+]
+
 export function App() {
   const spec = useEditor((s) => s.spec)
   const step = useEditor((s) => s.step)
@@ -42,6 +51,7 @@ export function App() {
   const removeAnnotation = useEditor((s) => s.removeAnnotation)
 
   const [presenting, setPresenting] = useState(false)
+  const [previewWidth, setPreviewWidth] = useState<string>('auto')
 
   const dataset = useMemo(() => selectDataset(spec), [spec])
   const theme = useMemo(
@@ -80,6 +90,23 @@ export function App() {
       nodes.some((node) => node.meta || (node.t === 'g' && walk(node.children)))
     return walk(rendered.scene.nodes)
   }, [rendered.scene])
+
+  /**
+   * Etapas "prontas" — heurísticas leves, só para o checkmark guiar o olhar.
+   * Dados pronto = tabela com valores mapeados; gráfico pronto = marcas
+   * desenhadas; anotar pronto = título com conclusão escrita.
+   */
+  const completed = useMemo(() => {
+    const hasY = spec.encoding.y.length > 0
+    return {
+      dados: dataset.rows.length > 0 && hasY,
+      grafico: hasY && hasMarks,
+      anotar: spec.text.title.trim().length > 3,
+      publicar: false,
+    } as Record<Step, boolean>
+  }, [dataset.rows.length, spec.encoding.y.length, spec.text.title, hasMarks])
+
+  const nextStep = STEP_ORDER[STEP_ORDER.indexOf(step) + 1]
 
   useEffect(() => {
     if (!toast) return
@@ -166,7 +193,9 @@ export function App() {
                 aria-selected={step === item.id}
                 onClick={() => setStep(item.id)}
               >
-                <span className="n">{item.n}</span>
+                <span className={'n' + (completed[item.id] ? ' done' : '')}>
+                  {completed[item.id] ? '✓' : item.n}
+                </span>
                 {item.label}
               </button>
             ))}
@@ -179,12 +208,30 @@ export function App() {
             {step === 'publicar' && rendered.scene && (
               <PublishStep spec={spec} scene={rendered.scene} />
             )}
+
+            {nextStep && (
+              <div className="panel-next">
+                <button
+                  type="button"
+                  className="btn primary next"
+                  onClick={() => setStep(nextStep)}
+                >
+                  Continuar: {STEPS.find((s) => s.id === nextStep)?.label} →
+                </button>
+              </div>
+            )}
           </div>
         </aside>
 
         <main className="stage">
           {rendered.scene ? (
-            <div className="stage-canvas">
+            <div
+              className="stage-canvas"
+              style={{
+                maxWidth:
+                  PREVIEW_WIDTHS.find((p) => p.id === previewWidth)?.maxWidth ?? 1200,
+              }}
+            >
               <Canvas scene={rendered.scene} spec={spec} />
               {!hasMarks && (
                 <div className="empty-overlay">
@@ -212,12 +259,22 @@ export function App() {
           )}
 
           <div className="stage-toolbar">
-            <span>
-              {spec.layout.width} × {spec.layout.height} px
-            </span>
-            <span>·</span>
-            <span>
-              {dataset.rows.length} linha(s), {dataset.columns.length} coluna(s)
+            <div className="chip-row" role="group" aria-label="Largura de preview">
+              {PREVIEW_WIDTHS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="chip"
+                  aria-pressed={previewWidth === preset.id}
+                  onClick={() => setPreviewWidth(preset.id)}
+                >
+                  <span className="label">{preset.label}</span>
+                </button>
+              ))}
+            </div>
+            <span className="toolbar-meta">
+              {spec.layout.width} × {spec.layout.height} px · {dataset.rows.length} linha(s),
+              {' '}{dataset.columns.length} coluna(s)
             </span>
           </div>
 
