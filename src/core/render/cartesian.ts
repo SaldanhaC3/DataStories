@@ -191,8 +191,14 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
     // Alvos de toque invisíveis: sem eles, uma linha fina é difícil de hover e
     // o tooltip não tem onde ler o valor do ponto. O handle "hit" faz a
     // exportação em SVG/PNG descartá-los — são só para a interação do editor.
+    // Um alvo por ponto viraria dezenas de milhares de nós em tabelas grandes
+    // (recalculados a cada tecla); amostramos para no máximo um alvo a cada
+    // ~10px de painel, que é a resolução que um cursor consegue mirar.
     if (!showPoints && !singleton) {
-      for (const p of defined) {
+      const maxTargets = Math.max(1, Math.floor(frame.plot.width / 10))
+      const step = Math.ceil(defined.length / maxTargets)
+      for (let k = 0; k < defined.length; k += step) {
+        const p = defined[k]
         const { x, y } = frame.xy(p.cat, p.val)
         nodes.push({
           t: 'circle',

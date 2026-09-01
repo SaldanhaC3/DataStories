@@ -7,7 +7,7 @@
  * uma ferramenta de acabamento.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { renderChart } from '../core/render'
 import type { SceneNode } from '../core/types'
 import { getTheme } from '../core/theme/themes'
@@ -36,6 +36,27 @@ const PREVIEW_WIDTHS: Array<{ id: string; label: string; maxWidth: number | null
   { id: 'mobile', label: 'Mobile 380', maxWidth: 380 },
 ]
 
+/**
+ * Largura real de um elemento, observada — é ela que alimenta o re-render do
+ * gráfico no tamanho do container. Sem isso, o preview "responsivo" seria só
+ * um CSS scale: fonte de 12px viraria 6px numa tela de 380px.
+ */
+function useElementWidth<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null)
+  const [width, setWidth] = useState<number | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect.width ?? 0
+      if (measured > 0) setWidth(Math.round(measured))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  return [ref, width] as const
+}
+
 export function App() {
   const spec = useEditor((s) => s.spec)
   const step = useEditor((s) => s.step)
@@ -52,6 +73,8 @@ export function App() {
 
   const [presenting, setPresenting] = useState(false)
   const [previewWidth, setPreviewWidth] = useState<string>('auto')
+  const [stageRef, stageWidth] = useElementWidth<HTMLDivElement>()
+  const [presentRef, presentWidth] = useElementWidth<HTMLDivElement>()
 
   const dataset = useMemo(() => selectDataset(spec), [spec])
   const theme = useMemo(
@@ -82,6 +105,38 @@ export function App() {
       return []
     }
   }, [spec, dataset, theme])
+
+  /**
+   * Cena do palco, re-renderizada na largura real do container: tipografia em
+   * tamanho verdadeiro em qualquer preview. A altura continua a do spec — é o
+   * que impede o cromo (cabeçalho, eixos, rodapé) de comer a área de plotagem
+   * em telas estreitas. A cena de exportação (`rendered`) permanece nas
+   * dimensões do documento.
+   */
+  const responsiveWidth = Math.max(240, stageWidth ?? spec.layout.width)
+  const previewScene = useMemo(() => {
+    try {
+      return renderChart({ spec, dataset, theme, width: responsiveWidth })
+    } catch {
+      return null
+    }
+  }, [spec, dataset, theme, responsiveWidth])
+
+  const presentScene = useMemo(() => {
+    if (!presenting) return null
+    try {
+      return renderChart({
+        spec,
+        dataset,
+        theme,
+        width: Math.max(240, presentWidth ?? spec.layout.width),
+      })
+    } catch {
+      return null
+    }
+  }, [presenting, spec, dataset, theme, presentWidth])
+
+  const stageScene = previewScene ?? rendered.scene
 
   /** Cena sem nenhuma marca = gráfico vazio; a cena em si só desenha eixos. */
   const hasMarks = useMemo(() => {
@@ -224,15 +279,16 @@ export function App() {
         </aside>
 
         <main className="stage">
-          {rendered.scene ? (
+          {stageScene ? (
             <div
+              ref={stageRef}
               className="stage-canvas"
               style={{
                 maxWidth:
                   PREVIEW_WIDTHS.find((p) => p.id === previewWidth)?.maxWidth ?? 1200,
               }}
             >
-              <Canvas scene={rendered.scene} spec={spec} />
+              <Canvas scene={stageScene} spec={spec} />
               {!hasMarks && (
                 <div className="empty-overlay">
                   <strong>Nenhuma coluna de valores no gráfico</strong>
@@ -295,8 +351,8 @@ export function App() {
             fechar ✕
           </button>
           <div className="presentation-stage" onClick={() => setPresenting(false)}>
-            <div className="presentation-chart" onClick={(e) => e.stopPropagation()}>
-              <Canvas scene={rendered.scene} spec={spec} />
+            <div className="presentation-chart" onClick={(e) => e.stopPropagation()} ref={presentRef}>
+              <Canvas scene={presentScene ?? rendered.scene!} spec={spec} />
             </div>
           </div>
         </div>
