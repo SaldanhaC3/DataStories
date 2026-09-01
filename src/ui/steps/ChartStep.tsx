@@ -198,6 +198,31 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
         )}
       </Group>
 
+      <Group title="Rótulos e números">
+        <Toggle
+          checked={spec.labels.valueLabels}
+          label="Mostrar os valores no gráfico"
+          onChange={(value) =>
+            update((draft) => {
+              draft.labels.valueLabels = value
+            })
+          }
+        />
+        <Toggle
+          checked={spec.labels.labelHighlightedOnly}
+          label="Só nas séries/categorias destacadas"
+          onChange={(value) =>
+            update((draft) => {
+              draft.labels.labelHighlightedOnly = value
+            })
+          }
+        />
+        <p className="inline-note">
+          Em linhas e dispersões os números aparecem apenas quando há espaço de leitura — com
+          pontos demais, o tooltip no hover cobre o papel deles.
+        </p>
+      </Group>
+
       <Group title="Aparência do gráfico">
         {definition.supportsStacking && (
           <Field label="Empilhamento">
@@ -256,7 +281,51 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
                 }
               />
             </Field>
+            <Field label="Tamanho dos pontos">
+              <NumberInput
+                value={spec.chart.options.pointRadius}
+                min={1}
+                max={10}
+                step={0.5}
+                onChange={(value) =>
+                  update((draft) => {
+                    draft.chart.options.pointRadius = value ?? 3.5
+                  })
+                }
+              />
+            </Field>
+            {spec.chart.type === 'area' && (
+              <Field label="Opacidade do preenchimento" hint="0,1 = bem leve; 0,6 = denso.">
+                <NumberInput
+                  value={spec.chart.options.fillOpacity}
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  onChange={(value) =>
+                    update((draft) => {
+                      draft.chart.options.fillOpacity = value ?? 0.18
+                    })
+                  }
+                />
+              </Field>
+            )}
           </>
+        )}
+
+        {(spec.chart.type === 'scatter' || spec.chart.type === 'dumbbell' || spec.chart.type === 'lollipop') && (
+          <Field label="Tamanho dos pontos">
+            <NumberInput
+              value={spec.chart.options.pointRadius}
+              min={1}
+              max={10}
+              step={0.5}
+              onChange={(value) =>
+                update((draft) => {
+                  draft.chart.options.pointRadius = value ?? 3.5
+                })
+              }
+            />
+          </Field>
         )}
 
         {(spec.chart.type === 'bar' || spec.chart.type === 'bar-horizontal') && (

@@ -230,6 +230,30 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
         })
       }
     }
+
+    // Rótulos de valor: só quando o espaçamento dá espaço de leitura. Uma
+    // etiqueta a cada 26px é o limite antes de virar ruído; com hover e
+    // tooltip disponíveis, rótulo apertado não compra nada.
+    if (spec.labels.valueLabels && density > 26) {
+      const offset = (showPoints ? spec.chart.options.pointRadius : 0) + 6
+      for (const p of defined) {
+        if (markMuted(ctx, s, p.i)) continue
+        const { x, y } = frame.xy(p.cat, p.val)
+        nodes.push({
+          t: 'text',
+          x,
+          y: y - offset,
+          text: frame.formatDatum(p.value ?? 0),
+          fill: theme.muted,
+          size: theme.footerSize,
+          family: theme.fontFamily,
+          anchor: 'middle',
+          baseline: 'auto',
+          halo: theme.background,
+          haloWidth: 2.5,
+        })
+      }
+    }
   }
 
   return nodes
@@ -240,9 +264,13 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
 // ---------------------------------------------------------------------------
 
 function drawScatter(ctx: DrawContext): SceneNode[] {
-  const { model, frame, spec } = ctx
+  const { model, frame, spec, theme } = ctx
   const nodes: SceneNode[] = []
   const radius = spec.chart.options.pointRadius + 1.5
+
+  const allPoints = model.series.reduce((sum, s) => sum + s.values.filter((v) => v !== null).length, 0)
+  // Rótulo em dispersão só quando dá para ler: acima disso, o tooltip cobre.
+  const labelValues = spec.labels.valueLabels && allPoints <= 40
 
   for (const s of drawOrder(model.series)) {
     for (let i = 0; i < s.values.length; i++) {
@@ -263,6 +291,21 @@ function drawScatter(ctx: DrawContext): SceneNode[] {
           value,
         },
       })
+
+      if (labelValues && !markMuted(ctx, s, i)) {
+        nodes.push({
+          t: 'text',
+          x,
+          y: y - radius - 5,
+          text: frame.formatDatum(value),
+          fill: theme.muted,
+          size: theme.footerSize,
+          family: theme.fontFamily,
+          anchor: 'middle',
+          halo: theme.background,
+          haloWidth: 2.5,
+        })
+      }
     }
   }
 

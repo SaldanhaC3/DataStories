@@ -125,7 +125,7 @@ function drawDonut(ctx: DrawContext): SceneNode[] {
     const mid = (start + end) / 2 - Math.PI / 2
     const percent = `${(slice.share * 100).toFixed(slice.share < 0.1 ? 1 : 0)}%`
 
-    if (slice.share > 0.09 && radius - inner > 34) {
+    if (slice.share > 0.09 && radius - inner > 34 && spec.labels.valueLabels) {
       // Cabe dentro: rótulo interno é mais limpo que linha de chamada.
       const r = (inner + radius) / 2
       nodes.push({
@@ -265,7 +265,7 @@ function drawWaffle(ctx: DrawContext): SceneNode[] {
   let lx = plot.x
   let ly = plot.y + gridHeight + theme.labelSize
   for (const slice of slices) {
-    const text = `${truncate(slice.label, 18)} ${(slice.share * 100).toFixed(0)}%`
+    const text = `${truncate(slice.label, 18)}${spec.labels.valueLabels ? ` ${(slice.share * 100).toFixed(0)}%` : ''}`
     const width = measureText(text, theme.labelSize, theme.fontFamily) + 26
     if (lx + width > plot.x + plot.width && lx > plot.x) {
       lx = plot.x
@@ -351,7 +351,7 @@ function drawTreemap(ctx: DrawContext): SceneNode[] {
 
     // Só rotula quando o retângulo comporta o texto inteiro: rótulo cortado
     // é pior do que rótulo nenhum.
-    if (w > labelWidth + 12 && h > theme.labelSize * 2.4) {
+    if (w > labelWidth + 12 && h > theme.labelSize * (spec.labels.valueLabels ? 2.4 : 1.4)) {
       nodes.push({
         t: 'text',
         x: x + 8,
@@ -362,15 +362,17 @@ function drawTreemap(ctx: DrawContext): SceneNode[] {
         weight: 700,
         family: theme.fontFamily,
       })
-      nodes.push({
-        t: 'text',
-        x: x + 8,
-        y: y + theme.labelSize * 2.3 + 6,
-        text: `${frame.formatDatum(slice.value)}  ·  ${(slice.share * 100).toFixed(0)}%`,
-        fill: mix(textColor, slice.color, 0.25),
-        size: theme.footerSize,
-        family: theme.fontFamily,
-      })
+      if (spec.labels.valueLabels) {
+        nodes.push({
+          t: 'text',
+          x: x + 8,
+          y: y + theme.labelSize * 2.3 + 6,
+          text: `${frame.formatDatum(slice.value)}  ·  ${(slice.share * 100).toFixed(0)}%`,
+          fill: mix(textColor, slice.color, 0.25),
+          size: theme.footerSize,
+          family: theme.fontFamily,
+        })
+      }
     }
   }
 

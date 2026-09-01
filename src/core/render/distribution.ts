@@ -264,6 +264,23 @@ function drawBoxplot(ctx: DrawContext): SceneNode[] {
       strokeWidth: 2,
     })
 
+    // A mediana é o número que se lê num boxplot; com o toggle ligado, ela
+    // aparece impressa acima da caixa.
+    if (ctx.spec.labels.valueLabels) {
+      nodes.push({
+        t: 'text',
+        x: center,
+        y: Math.min(yQ1, yQ3) - 6,
+        text: frame.formatDatum(box.median),
+        fill: theme.muted,
+        size: theme.footerSize,
+        family: theme.fontFamily,
+        anchor: 'middle',
+        halo: theme.background,
+        haloWidth: 2.5,
+      })
+    }
+
     for (const outlier of box.outliers) {
       nodes.push({
         t: 'circle',

@@ -158,8 +158,8 @@ function drawSlope(ctx: DrawContext): SceneNode[] {
       b,
       color,
       muted,
-      left: `${label}  ${frame.formatDatum(a)}`,
-      right: `${frame.formatDatum(b)}  ${label}`,
+      left: spec.labels.valueLabels ? `${label}  ${frame.formatDatum(a)}` : label,
+      right: spec.labels.valueLabels ? `${frame.formatDatum(b)}  ${label}` : label,
       leftSlot: { target: y1, height: size * 1.16, y: y1 },
       rightSlot: { target: y2, height: size * 1.16, y: y2 },
     })
