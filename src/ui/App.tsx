@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo } from 'react'
 import { renderChart } from '../core/render'
+import type { SceneNode } from '../core/types'
 import { getTheme } from '../core/theme/themes'
 import { lintSpec } from '../advisor/lint'
 import { selectDataset, useEditor, type Step } from '../state/store'
@@ -66,6 +67,14 @@ export function App() {
       return []
     }
   }, [spec, dataset, theme])
+
+  /** Cena sem nenhuma marca = gráfico vazio; a cena em si só desenha eixos. */
+  const hasMarks = useMemo(() => {
+    if (!rendered.scene) return false
+    const walk = (nodes: SceneNode[]): boolean =>
+      nodes.some((node) => node.meta || (node.t === 'g' && walk(node.children)))
+    return walk(rendered.scene.nodes)
+  }, [rendered.scene])
 
   useEffect(() => {
     if (!toast) return
@@ -134,7 +143,27 @@ export function App() {
 
         <main className="stage">
           {rendered.scene ? (
-            <Canvas scene={rendered.scene} spec={spec} />
+            <div className="stage-canvas">
+              <Canvas scene={rendered.scene} spec={spec} />
+              {!hasMarks && (
+                <div className="empty-overlay">
+                  <strong>Nenhuma coluna de valores no gráfico</strong>
+                  <p>Escolha quais colunas numéricas devem ser desenhadas.</p>
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={() => setStep('grafico')}
+                    >
+                      Escolher colunas de valores
+                    </button>
+                    <button type="button" className="btn" onClick={() => setStep('dados')}>
+                      Corrigir tipos dos dados
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="empty" style={{ maxWidth: 460 }}>
               {rendered.error}

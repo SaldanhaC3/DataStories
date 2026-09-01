@@ -12,7 +12,16 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { ChartSpec, Scene, SceneNode } from '../core/types'
 import { getChartDefinition } from '../core/render'
+import { formatNumber } from '../core/format'
 import { useEditor } from '../state/store'
+
+interface HoverState {
+  x: number
+  y: number
+  series: string
+  category: string
+  value: number
+}
 
 interface NodeProps {
   node: SceneNode
@@ -34,6 +43,7 @@ function SceneNodeView({ node, index }: NodeProps) {
     'data-series': node.meta?.series,
     'data-row': node.meta?.rowIndex,
     'data-category': node.meta?.category,
+    'data-value': node.meta?.value,
     className: node.meta ? 'mark-clickable' : node.handle?.startsWith('annotation:') ? 'draggable-annotation' : undefined,
   }
 
@@ -149,6 +159,7 @@ interface DragState {
 export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [hover, setHover] = useState<HoverState | null>(null)
   const update = useEditor((s) => s.update)
   const selectAnnotation = useEditor((s) => s.selectAnnotation)
   const setStep = useEditor((s) => s.setStep)
@@ -205,6 +216,26 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
+      // Tooltip: qualquer marca com rastro mostra série, categoria e valor.
+      if (interactive && !drag) {
+        const target = event.target as Element
+        const series = target.getAttribute('data-series')
+        const shell = svgRef.current?.parentElement
+        if (series != null && shell) {
+          const value = Number(target.getAttribute('data-value'))
+          const rect = shell.getBoundingClientRect()
+          setHover({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            series,
+            category: target.getAttribute('data-category') ?? '',
+            value: Number.isFinite(value) ? value : Number.NaN,
+          })
+        } else if (hover) {
+          setHover(null)
+        }
+      }
+
       if (!drag || event.pointerId !== drag.pointerId) return
       const scale = scaleOf()
       const dx = ((event.clientX - drag.startClientX) * scale) / scene.plot.width
@@ -225,7 +256,7 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         { coalesceKey: `drag:${drag.id}` },
       )
     },
-    [drag, scaleOf, scene.plot.width, scene.plot.height, update],
+    [drag, hover, interactive, scaleOf, scene.plot.width, scene.plot.height, update],
   )
 
   const endDrag = useCallback(
@@ -286,12 +317,26 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onPointerLeave={() => setHover(null)}
         onClick={onClick}
       >
         {scene.nodes.map((node, i) => (
           <SceneNodeView key={i} node={node} index={i} />
         ))}
       </svg>
+      {hover && Number.isFinite(hover.value) && (
+        <div
+          className="chart-tooltip"
+          style={{ left: Math.min(hover.x + 14, scene.width - 40), top: Math.max(hover.y - 44, 4) }}
+        >
+          <b>{hover.series}</b>
+          <span>{hover.category}</span>
+          <em>
+            {formatNumber(hover.value, null, spec.data.locale)}
+            {spec.axes.y.unit ? ` ${spec.axes.y.unit}` : ''}
+          </em>
+        </div>
+      )}
     </div>
   )
 }

@@ -29,12 +29,30 @@ export function DataGrid({ source }: { source: DataSource }) {
   const hiddenColumns = useEditor((s) => s.spec.transform.hiddenColumns)
   const columns = useMemo(() => inferColumns(source), [source])
   const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
   const hidden = useMemo(() => new Set(hiddenColumns), [hiddenColumns])
 
-  const pageCount = Math.max(1, Math.ceil(source.rows.length / ROWS_PER_PAGE))
+  /**
+   * Busca filtra só a visualização — o gráfico continua usando todas as
+   * linhas, igual ao resto da navegação da grade. Serve para achar uma linha
+   * numa tabela grande sem mexer no dado.
+   */
+  const needle = query.trim().toLowerCase()
+  const matching = useMemo(() => {
+    if (!needle) return null
+    const hits: number[] = []
+    source.rows.forEach((row, index) => {
+      if (row.some((cell) => (cell ?? '').toLowerCase().includes(needle))) hits.push(index)
+    })
+    return hits
+  }, [source.rows, needle])
+
+  const pageRows = matching ?? source.rows.map((_, index) => index)
+  const pageCount = Math.max(1, Math.ceil(pageRows.length / ROWS_PER_PAGE))
   const safePage = Math.min(page, pageCount - 1)
-  const visible = source.rows.slice(safePage * ROWS_PER_PAGE, (safePage + 1) * ROWS_PER_PAGE)
-  const firstRowIndex = safePage * ROWS_PER_PAGE
+  const visible = pageRows
+    .slice(safePage * ROWS_PER_PAGE, (safePage + 1) * ROWS_PER_PAGE)
+    .map((rowIndex) => ({ rowIndex, row: source.rows[rowIndex] }))
 
   const setCell = (rowIndex: number, columnIndex: number, value: string) => {
     update(
@@ -133,6 +151,18 @@ export function DataGrid({ source }: { source: DataSource }) {
 
   return (
     <>
+      {source.rows.length > ROWS_PER_PAGE && (
+        <input
+          type="search"
+          className="grid-search"
+          placeholder="Buscar nas linhas (só afeta a visualização)…"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setPage(0)
+          }}
+        />
+      )}
       <div className="grid-wrap">
         <table className="data-grid">
           <thead>
@@ -212,10 +242,8 @@ export function DataGrid({ source }: { source: DataSource }) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((row, i) => {
-              const rowIndex = firstRowIndex + i
-              return (
-                <tr key={rowIndex}>
+            {visible.map(({ rowIndex, row }) => (
+              <tr key={rowIndex}>
                   <td
                     className="row-index"
                     onDoubleClick={() => removeRow(rowIndex)}
@@ -241,8 +269,7 @@ export function DataGrid({ source }: { source: DataSource }) {
                     </td>
                   ))}
                 </tr>
-              )
-            })}
+            ))}
           </tbody>
         </table>
       </div>
@@ -256,7 +283,7 @@ export function DataGrid({ source }: { source: DataSource }) {
         </button>
       </div>
 
-      {source.rows.length > ROWS_PER_PAGE && (
+      {(pageRows.length > ROWS_PER_PAGE || needle) && (
         <div className="pagination">
           <button
             type="button"
@@ -267,7 +294,10 @@ export function DataGrid({ source }: { source: DataSource }) {
             ←
           </button>
           <span className="inline-note">
-            Página {safePage + 1} de {pageCount} · {source.rows.length} linhas
+            Página {safePage + 1} de {pageCount}
+            {needle
+              ? ` · ${pageRows.length} de ${source.rows.length} linhas correspondem`
+              : ` · ${source.rows.length} linhas`}
           </span>
           <button
             type="button"
