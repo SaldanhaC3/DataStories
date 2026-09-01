@@ -20,6 +20,13 @@ export type Step = 'dados' | 'grafico' | 'anotar' | 'publicar'
 const STORAGE_KEY = 'datastories:rascunho'
 const COALESCE_MS = 700
 const HISTORY_LIMIT = 80
+/**
+ * Histórico que sobrevive ao recarregar a página. É menor que HISTORY_LIMIT
+ * porque cada entrada carrega um spec inteiro — 80 deles podiam estourar a
+ * cota do localStorage. O futuro (Refazer) importa mais que o passado longo:
+ * é ele que permite re-zerar o gráfico depois de um F5.
+ */
+const PERSISTED_HISTORY = 25
 /** Janela do debounce de autosave — uma tecla não deve serializar o documento inteiro. */
 const PERSIST_DEBOUNCE_MS = 500
 
@@ -106,61 +113,114 @@ function clone(spec: ChartSpec): ChartSpec {
     : (JSON.parse(JSON.stringify(spec)) as ChartSpec)
 }
 
-function loadInitial(): ChartSpec {
+/**
+ * Formato do autosave. O spec continua sendo a verdade; o histórico vai junto
+ * para que Desfazer/Refazer sobrevivam ao recarregar — em especial o Refazer
+ * re-zerar o gráfico depois de um F5.
+ */
+interface PersistedDoc {
+  kind: 'datastories-doc'
+  spec: ChartSpec
+  past: HistoryEntry[]
+  future: HistoryEntry[]
+}
+
+function isPersistedDoc(value: unknown): value is PersistedDoc {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as PersistedDoc).kind === 'datastories-doc' &&
+    typeof (value as PersistedDoc).spec === 'object'
+  )
+}
+
+function loadInitial(): {
+  spec: ChartSpec
+  past: HistoryEntry[]
+  future: HistoryEntry[]
+} {
   if (typeof localStorage !== 'undefined') {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
-      const result = parseSpec(saved)
-      if (result.ok && result.spec) return result.spec
+      try {
+        const parsed: unknown = JSON.parse(saved)
+        if (isPersistedDoc(parsed)) {
+          // Revalida o spec: um formato antigo ou corrompido não pode derrubar
+          // o editor na inicialização.
+          const result = parseSpec(parsed.spec)
+          if (result.ok && result.spec) {
+            return {
+              spec: result.spec,
+              past: Array.isArray(parsed.past) ? parsed.past : [],
+              future: Array.isArray(parsed.future) ? parsed.future : [],
+            }
+          }
+        } else {
+          // Formato legado: o conteúdo da chave é o spec puro.
+          const result = parseSpec(parsed)
+          if (result.ok && result.spec) return { spec: result.spec, past: [], future: [] }
+        }
+      } catch {
+        // JSON inválido: cai no spec padrão abaixo.
+      }
     }
   }
-  return createDefaultSpec()
+  return { spec: createDefaultSpec(), past: [], future: [] }
 }
 
 export const useEditor = create<EditorState>((set, get) => {
-  // Autosave: debounce de módulo com flush imediato. `pending` é o último
-  // spec que ainda não foi escrito no localStorage; `timer` é o agendamento
-  // desse escrita. Guardar isso fora do `set` evita recriar o timer a cada
-  // render e permite descartar (`flush`) de qualquer lugar do store.
+  // Autosave: debounce de módulo. O snapshot lê o estado corrente no momento
+  // da escrita (não na chamada), então o debounce não precisa carregar valor.
   let timer: ReturnType<typeof setTimeout> | null = null
-  let pending: ChartSpec | null = null
 
-  function writeNow(spec: ChartSpec): void {
+  function snapshot(): string {
+    const { spec, past, future } = get()
+    const doc: PersistedDoc = {
+      kind: 'datastories-doc',
+      spec,
+      past: past.slice(-PERSISTED_HISTORY),
+      future: future.slice(0, PERSISTED_HISTORY),
+    }
+    return JSON.stringify(doc)
+  }
+
+  function writeNow(): void {
     if (typeof localStorage === 'undefined') return
     set({ saveState: 'salvando' })
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(spec))
+      localStorage.setItem(STORAGE_KEY, snapshot())
       set({ saveState: 'salvo' })
     } catch {
-      // Cota estourada ou modo privado: a pessoa precisa saber, não descobrir
-      // meia hora depois que nada foi salvo. `saveState` carrega essa notícia
-      // até a topbar; App.tsx decide como avisar.
-      set({ saveState: 'falhou' })
+      // Cota estourada: tentar de novo sem o histórico antes de declarar
+      // falha — perder o Desfazer é melhor que perder o autosave por causa
+      // de um histórico gordo. Cota/privado no spec puro: aí sim avisar.
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(get().spec))
+        set({ saveState: 'salvo' })
+      } catch {
+        // Cota estourada ou modo privado: a pessoa precisa saber, não descobrir
+        // meia hora depois que nada foi salvo. `saveState` carrega essa notícia
+        // até a topbar; App.tsx decide como avisar.
+        set({ saveState: 'falhou' })
+      }
     }
   }
 
-  function schedulePersist(spec: ChartSpec): void {
-    pending = spec
+  function schedulePersist(): void {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       timer = null
-      const toSave = pending
-      pending = null
-      if (toSave) writeNow(toSave)
+      writeNow()
     }, PERSIST_DEBOUNCE_MS)
   }
 
-  /** Descarta o debounce e grava imediatamente o que estiver pendente. */
+  /** Descarta o debounce e grava imediatamente. */
   function flushPersist(): void {
     if (timer) {
       clearTimeout(timer)
       timer = null
     }
-    if (pending) {
-      const toSave = pending
-      pending = null
-      writeNow(toSave)
-    }
+    writeNow()
   }
 
   if (typeof window !== 'undefined') {
@@ -168,9 +228,7 @@ export const useEditor = create<EditorState>((set, get) => {
   }
 
   return {
-    spec: loadInitial(),
-    past: [],
-    future: [],
+    ...loadInitial(),
     step: 'dados',
     selectedAnnotation: null,
     toast: null,
@@ -195,7 +253,7 @@ export const useEditor = create<EditorState>((set, get) => {
       const nextPast =
         options.silent || coalescing ? past : [...past, { spec, step }].slice(-HISTORY_LIMIT)
 
-      schedulePersist(draft)
+      schedulePersist()
       set({ spec: draft, past: nextPast, future: [] })
     },
 
@@ -205,13 +263,11 @@ export const useEditor = create<EditorState>((set, get) => {
       // sentido esperar o debounce, e qualquer edição pendente do documento
       // anterior precisa ser gravada antes de trocarmos de spec.
       flushPersist()
-      writeNow(next)
 
       // `resetHistory` só existia para zerar past/future — mas isso é o que
       // torna essas trocas irreversíveis. A única hora em que zerar histórico
-      // faz sentido é no boot (que nem passa por `replaceSpec`, lê direto do
-      // localStorage). Fora daí, o spec anterior sempre vai para `past`, como
-      // qualquer outra edição.
+      // faz sentido é no boot (que lê direto do localStorage). Fora daí, o
+      // spec anterior sempre vai para `past`, como qualquer outra edição.
       void options
       armForUndo = true
       set({
@@ -220,6 +276,9 @@ export const useEditor = create<EditorState>((set, get) => {
         future: [],
         selectedAnnotation: null,
       })
+      // Grava já o estado pós-ação, com a entrada de histórico incluída —
+      // senão um F5 logo em seguida perderia o Desfazer/Refazer desta troca.
+      writeNow()
     },
 
     loadFromJson: (text) => {
@@ -236,7 +295,7 @@ export const useEditor = create<EditorState>((set, get) => {
       if (past.length === 0) return
       const previous = past[past.length - 1]
       lastCoalesce = null
-      schedulePersist(previous.spec)
+      schedulePersist()
       set({
         spec: previous.spec,
         step: previous.step,
@@ -250,7 +309,7 @@ export const useEditor = create<EditorState>((set, get) => {
       if (future.length === 0) return
       const next = future[0]
       lastCoalesce = null
-      schedulePersist(next.spec)
+      schedulePersist()
       set({
         spec: next.spec,
         step: next.step,
@@ -302,7 +361,6 @@ export const useEditor = create<EditorState>((set, get) => {
       const { spec, step, past } = get()
       const fresh = createDefaultSpec()
       flushPersist()
-      writeNow(fresh)
       lastCoalesce = null
       armForUndo = true
       set({
@@ -312,6 +370,10 @@ export const useEditor = create<EditorState>((set, get) => {
         selectedAnnotation: null,
         step: 'dados',
       })
+      // Imediato (não debounced): zerar o gráfico não pode se perder num F5
+      // que aconteça antes do debounce disparar — nem o estado zerado, nem o
+      // Refazer que o traz de volta.
+      writeNow()
     },
   }
 })
