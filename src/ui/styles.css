@@ -234,6 +234,17 @@ textarea {
 
 .chart-tooltip b {
   font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-tooltip .swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: none;
 }
 
 .chart-tooltip span {
@@ -896,6 +907,129 @@ table.data-grid th.th-hidden input {
 
 .mark-clickable {
   cursor: pointer;
+}
+
+/*
+ * Fluidêz da tela: como a cena devolve atributos geométricos a cada mudança do
+ * spec e o React reutiliza os mesmos nós do DOM, uma transição CSS transforma
+ * cada ajuste (ordenar, destacar, trocar tema) em movimento contínuo — sem
+ * nenhuma máquina de animação no núcleo, que continua puro e exportável.
+ */
+svg .mark-clickable {
+  transition:
+    x 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    y 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    width 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    height 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    cx 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    cy 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    r 0.32s cubic-bezier(0.25, 0.8, 0.3, 1),
+    fill 0.22s ease,
+    opacity 0.22s ease;
+}
+
+/* Entrada: as marcas surgem em cascata, o gráfico "acorda" em vez de pular
+   pronto na tela. O atraso vem do índice do nó, definido inline no Canvas. */
+svg .mark-clickable {
+  animation: mark-enter 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes mark-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mark-dim {
+  opacity: 0.28;
+}
+
+svg .mark-hot {
+  filter: brightness(1.06);
+}
+
+/* Guião vertical que acompanha o cursor em linhas, áreas e dispersão. */
+svg .crosshair {
+  stroke: var(--muted-soft);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------- modo apresentação */
+
+.presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(13, 16, 20, 0.94);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: presentation-fade 0.22s ease both;
+}
+
+@keyframes presentation-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.presentation-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.presentation-chart {
+  position: relative;
+  z-index: 1;
+  width: min(92vw, 1280px);
+  max-height: 90vh;
+  display: flex;
+  justify-content: center;
+  animation: presentation-zoom 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.presentation-chart .canvas-shell {
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+
+@keyframes presentation-zoom {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.presentation-close {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 2;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.presentation-close:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 @media (max-width: 1080px) {

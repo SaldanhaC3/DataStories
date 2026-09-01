@@ -170,6 +170,15 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
         fill: 'none',
         linecap: 'round',
         linejoin: 'round',
+        // O rastro na linha inteira permite hover/clique mesmo sem marcadores
+        // de ponto; o valor fica como NaN para o tooltip não imprimir número
+        // errado (o ponto mais próximo mostra o valor certo).
+        meta: {
+          series: s.name,
+          rowIndex: -1,
+          category: '',
+          value: Number.NaN,
+        },
       })
     }
 
@@ -178,6 +187,29 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
     const density = frame.plot.width / Math.max(1, defined.length)
     const showPoints = spec.chart.options.showPoints && density > 14
     const singleton = defined.length === 1
+
+    // Alvos de toque invisíveis: sem eles, uma linha fina é difícil de hover e
+    // o tooltip não tem onde ler o valor do ponto. O handle "hit" faz a
+    // exportação em SVG/PNG descartá-los — são só para a interação do editor.
+    if (!showPoints && !singleton) {
+      for (const p of defined) {
+        const { x, y } = frame.xy(p.cat, p.val)
+        nodes.push({
+          t: 'circle',
+          cx: x,
+          cy: y,
+          r: Math.max(11, width * 3),
+          fill: 'transparent',
+          handle: 'hit',
+          meta: {
+            series: s.name,
+            rowIndex: p.i,
+            category: model.categoryLabels[p.i],
+            value: p.value ?? 0,
+          },
+        })
+      }
+    }
 
     if (showPoints || singleton) {
       for (const p of defined) {

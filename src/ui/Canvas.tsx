@@ -8,7 +8,7 @@
  * espera de uma ferramenta de acabamento.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { ChartSpec, Scene, SceneNode } from '../core/types'
 import { getChartDefinition } from '../core/render'
@@ -21,7 +21,20 @@ interface HoverState {
   series: string
   category: string
   value: number
+  /** Chave usada para esmaecer as marcas que não são a hovered. */
+  key: string
+  /** Posição do cursor em unidades do SVG, para o crosshair. */
+  svgX: number
 }
+
+/**
+ * A chave de hover desce até cada marca via contexto: é o que permite
+ * esmaecer as séries concorrentes sem repassar props pela árvore inteira.
+ */
+const HoverContext = createContext<{
+  key: string | null
+  highlightsCategories: boolean
+}>({ key: null, highlightsCategories: false })
 
 interface NodeProps {
   node: SceneNode
@@ -37,6 +50,21 @@ function baselineOf(baseline: string | undefined): SvgBaseline {
 }
 
 function SceneNodeView({ node, index }: NodeProps) {
+  const hover = useContext(HoverContext)
+
+  let className = node.meta ? 'mark-clickable' : undefined
+  if (node.meta) {
+    const key = hover.highlightsCategories ? node.meta.category : node.meta.series
+    if (hover.key != null && key !== hover.key) className = 'mark-clickable mark-dim'
+    else if (hover.key != null) className = 'mark-clickable mark-hot'
+  } else if (node.handle?.startsWith('annotation:')) {
+    className = 'draggable-annotation'
+  }
+
+  const markStyle = node.meta
+    ? { animationDelay: `${Math.min(index * 18, 360)}ms` }
+    : undefined
+
   const common = {
     opacity: node.opacity,
     'data-handle': node.handle,
@@ -44,7 +72,7 @@ function SceneNodeView({ node, index }: NodeProps) {
     'data-row': node.meta?.rowIndex,
     'data-category': node.meta?.category,
     'data-value': node.meta?.value,
-    className: node.meta ? 'mark-clickable' : node.handle?.startsWith('annotation:') ? 'draggable-annotation' : undefined,
+    className,
   }
 
   switch (node.t) {
@@ -60,6 +88,7 @@ function SceneNodeView({ node, index }: NodeProps) {
           fill={node.fill}
           stroke={node.stroke}
           strokeWidth={node.strokeWidth}
+          style={markStyle}
           {...common}
         />
       )
@@ -75,6 +104,7 @@ function SceneNodeView({ node, index }: NodeProps) {
           strokeWidth={node.strokeWidth ?? 1}
           strokeDasharray={node.dash}
           strokeLinecap={node.linecap}
+          style={markStyle}
           {...common}
         />
       )
@@ -88,6 +118,7 @@ function SceneNodeView({ node, index }: NodeProps) {
           fill={node.fill}
           stroke={node.stroke}
           strokeWidth={node.strokeWidth}
+          style={markStyle}
           {...common}
         />
       )
@@ -102,6 +133,7 @@ function SceneNodeView({ node, index }: NodeProps) {
           strokeDasharray={node.dash}
           strokeLinecap={node.linecap}
           strokeLinejoin={node.linejoin}
+          style={markStyle}
           {...common}
         />
       )
@@ -122,7 +154,7 @@ function SceneNodeView({ node, index }: NodeProps) {
           strokeWidth={node.halo ? node.haloWidth ?? 3 : undefined}
           strokeLinejoin={node.halo ? 'round' : undefined}
           paintOrder={node.halo ? 'stroke' : undefined}
-          style={{ userSelect: 'none' }}
+          style={{ userSelect: 'none', ...markStyle }}
           {...common}
         >
           {node.text}
@@ -214,6 +246,35 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
     [interactive, spec.annotations, selectAnnotation],
   )
 
+  /**
+   * Nas linhas, quem recebe o hover é o caminho inteiro (valor NaN no rastro).
+   * O número certo é o da marca da mesma série mais próxima do cursor — este
+   * método o acha entre os nós já desenhados, sem recalcular nada do modelo.
+   */
+  const nearestDatum = useCallback(
+    (series: string, svgX: number): { category: string; value: number } | null => {
+      const svg = svgRef.current
+      if (!svg) return null
+      const svgRect = svg.getBoundingClientRect()
+      const scale = svgRect.width > 0 ? scene.width / svgRect.width : 1
+      let best: { category: string; value: number; dist: number } | null = null
+      for (const el of svg.querySelectorAll<SVGElement>('[data-series]')) {
+        if (el.getAttribute('data-series') !== series) continue
+        const value = Number(el.getAttribute('data-value'))
+        if (!Number.isFinite(value)) continue
+        const box = el.getBoundingClientRect()
+        if (box.width === 0 && box.height === 0) continue
+        const cx = (box.left + box.width / 2 - svgRect.left) * scale
+        const dist = Math.abs(cx - svgX)
+        if (!best || dist < best.dist) {
+          best = { category: el.getAttribute('data-category') ?? '', value, dist }
+        }
+      }
+      return best ? { category: best.category, value: best.value } : null
+    },
+    [scene.width],
+  )
+
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
       // Tooltip: qualquer marca com rastro mostra série, categoria e valor.
@@ -222,14 +283,21 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         const series = target.getAttribute('data-series')
         const shell = svgRef.current?.parentElement
         if (series != null && shell) {
+          const svgRect = svgRef.current?.getBoundingClientRect()
+          const scale = svgRect && svgRect.width > 0 ? scene.width / svgRect.width : 1
+          const svgX = svgRect ? (event.clientX - svgRect.left) * scale : 0
           const value = Number(target.getAttribute('data-value'))
           const rect = shell.getBoundingClientRect()
+          const category = target.getAttribute('data-category') ?? ''
+          const nearest = Number.isFinite(value) ? null : nearestDatum(series, svgX)
           setHover({
             x: event.clientX - rect.left,
             y: event.clientY - rect.top,
             series,
-            category: target.getAttribute('data-category') ?? '',
-            value: Number.isFinite(value) ? value : Number.NaN,
+            category: nearest?.category ?? category,
+            value: Number.isFinite(value) ? value : (nearest?.value ?? Number.NaN),
+            key: highlightsCategories ? category : series,
+            svgX,
           })
         } else if (hover) {
           setHover(null)
@@ -256,7 +324,7 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         { coalesceKey: `drag:${drag.id}` },
       )
     },
-    [drag, hover, interactive, scaleOf, scene.plot.width, scene.plot.height, update],
+    [drag, hover, interactive, highlightsCategories, nearestDatum, scaleOf, scene.width, scene.plot.width, scene.plot.height, update],
   )
 
   const endDrag = useCallback(
@@ -303,6 +371,15 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
     [interactive, drag, highlightsCategories, update, selectAnnotation, setStep],
   )
 
+  /** Crosshair faz sentido onde a posição ao longo do eixo x é leitura. */
+  const showCrosshair =
+    spec.chart.type === 'line' || spec.chart.type === 'area' || spec.chart.type === 'scatter'
+
+  const hoverColor = useMemo(
+    () => (hover ? scene.series.find((s) => s.name === hover.series)?.color : undefined),
+    [hover, scene.series],
+  )
+
   return (
     <div className="canvas-shell" style={{ width: `min(100%, max(${scene.width}px, 72vw))` }}>
       <svg
@@ -320,16 +397,30 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         onPointerLeave={() => setHover(null)}
         onClick={onClick}
       >
-        {scene.nodes.map((node, i) => (
-          <SceneNodeView key={i} node={node} index={i} />
-        ))}
+        {interactive && hover && showCrosshair && (
+          <line
+            className="crosshair"
+            x1={hover.svgX}
+            y1={scene.plot.y}
+            x2={hover.svgX}
+            y2={scene.plot.y + scene.plot.height}
+          />
+        )}
+        <HoverContext.Provider value={{ key: hover?.key ?? null, highlightsCategories }}>
+          {scene.nodes.map((node, i) => (
+            <SceneNodeView key={i} node={node} index={i} />
+          ))}
+        </HoverContext.Provider>
       </svg>
       {hover && Number.isFinite(hover.value) && (
         <div
           className="chart-tooltip"
           style={{ left: Math.min(hover.x + 14, scene.width - 40), top: Math.max(hover.y - 44, 4) }}
         >
-          <b>{hover.series}</b>
+          <b>
+            {hoverColor && <i className="swatch" style={{ background: hoverColor }} />}
+            {hover.series}
+          </b>
           <span>{hover.category}</span>
           <em>
             {formatNumber(hover.value, null, spec.data.locale)}

@@ -7,7 +7,7 @@
  * uma ferramenta de acabamento.
  */
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { renderChart } from '../core/render'
 import type { SceneNode } from '../core/types'
 import { getTheme } from '../core/theme/themes'
@@ -37,6 +37,11 @@ export function App() {
   const canRedo = useEditor((s) => s.future.length > 0)
   const toast = useEditor((s) => s.toast)
   const showToast = useEditor((s) => s.showToast)
+  const selectedAnnotation = useEditor((s) => s.selectedAnnotation)
+  const selectAnnotation = useEditor((s) => s.selectAnnotation)
+  const removeAnnotation = useEditor((s) => s.removeAnnotation)
+
+  const [presenting, setPresenting] = useState(false)
 
   const dataset = useMemo(() => selectDataset(spec), [spec])
   const theme = useMemo(
@@ -84,19 +89,52 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) return
-      const key = event.key.toLowerCase()
-      if (key === 'z' && !event.shiftKey) {
+      const target = event.target as HTMLElement | null
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+
+      if (event.key === 'Escape') {
+        if (presenting) setPresenting(false)
+        else if (selectedAnnotation) selectAnnotation(null)
+        return
+      }
+
+      if (event.ctrlKey || event.metaKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'z' && !event.shiftKey) {
+          event.preventDefault()
+          undo()
+        } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+          event.preventDefault()
+          redo()
+        } else if (key >= '1' && key <= '4') {
+          event.preventDefault()
+          setStep(STEPS[Number(key) - 1].id)
+        }
+        return
+      }
+
+      // Del remove a anotação selecionada — mas nunca enquanto se digita.
+      if (!typing && selectedAnnotation && (event.key === 'Delete' || event.key === 'Backspace')) {
         event.preventDefault()
-        undo()
-      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
-        event.preventDefault()
-        redo()
+        removeAnnotation(selectedAnnotation)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo])
+  }, [
+    undo,
+    redo,
+    setStep,
+    presenting,
+    selectedAnnotation,
+    selectAnnotation,
+    removeAnnotation,
+  ])
 
   return (
     <div className="app">
@@ -110,6 +148,9 @@ export function App() {
         </button>
         <button type="button" className="btn ghost" onClick={redo} disabled={!canRedo} title="Ctrl+Shift+Z">
           Refazer
+        </button>
+        <button type="button" className="btn primary" onClick={() => setPresenting(true)}>
+          Apresentar
         </button>
       </header>
 
@@ -185,6 +226,24 @@ export function App() {
           </div>
         </main>
       </div>
+
+      {presenting && rendered.scene && (
+        <div className="presentation" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="presentation-close"
+            onClick={() => setPresenting(false)}
+            title="Fechar (Esc)"
+          >
+            fechar ✕
+          </button>
+          <div className="presentation-stage" onClick={() => setPresenting(false)}>
+            <div className="presentation-chart" onClick={(e) => e.stopPropagation()}>
+              <Canvas scene={rendered.scene} spec={spec} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </div>

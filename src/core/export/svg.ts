@@ -36,6 +36,9 @@ function baselineAttr(baseline: string | undefined): string | undefined {
 }
 
 export function nodeToSvg(node: SceneNode): string {
+  // Alvos de toque da interação do editor não fazem parte do desenho.
+  if (node.handle === 'hit') return ''
+
   const opacity = node.opacity !== undefined && node.opacity !== 1 ? node.opacity : undefined
 
   switch (node.t) {
