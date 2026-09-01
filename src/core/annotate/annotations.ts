@@ -24,6 +24,7 @@ import type {
 import type { ChartModel } from '../model'
 import type { Frame } from '../frame'
 import { measureText, wrapText } from '../text'
+import { backdropOf } from '../theme/themes'
 import { fade } from '../theme/contrast'
 import { parseDate, parseNumber } from '../dataset/infer'
 import type { LocaleId } from '../format'
@@ -105,7 +106,7 @@ function renderRange(
   const start = Math.min(a, b)
   const end = Math.max(a, b)
   const color = annotation.color ?? theme.foreground
-  const fill = fade(color, 0.09, theme.background)
+  const fill = fade(color, 0.09, backdropOf(theme))
   const { plot } = frame
 
   // O eixo da anotação é o do dado, não o da tela: em barras horizontais o
@@ -294,7 +295,7 @@ function renderPoint(
       weight: 600,
       family: theme.fontFamily,
       anchor: toLeft ? 'end' : 'start',
-      halo: theme.background,
+      halo: backdropOf(theme),
       haloWidth: 3,
     })
   }

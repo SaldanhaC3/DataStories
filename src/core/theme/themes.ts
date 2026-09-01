@@ -121,3 +121,12 @@ export function getTheme(id: string, overrides?: Partial<ThemeTokens>): Theme {
   if (!overrides || Object.keys(overrides).length === 0) return base
   return { ...base, ...overrides }
 }
+
+/**
+ * Fundo para matemática de cor (halo, fade, mix). Quando o gráfico pede fundo
+ * transparente, o desenho não pinta fundo — mas misturas de cor precisam de um
+ * valor opaco; branco é o pressuposto razoável de onde o gráfico será embutido.
+ */
+export function backdropOf(theme: { background: string }): string {
+  return theme.background === 'transparent' ? '#ffffff' : theme.background
+}

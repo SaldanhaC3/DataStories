@@ -19,6 +19,7 @@ import type { ChartModel } from '../model'
 import type { ChartDefinition, DrawContext } from './context'
 import { categorical } from '../theme/palettes'
 import { contrastRatio, mix } from '../theme/contrast'
+import { backdropOf } from '../theme/themes'
 import { measureText } from '../text'
 import { truncate } from '../format'
 
@@ -133,7 +134,7 @@ function drawDonut(ctx: DrawContext): SceneNode[] {
         x: cx + Math.cos(mid) * r,
         y: cy + Math.sin(mid) * r,
         text: percent,
-        fill: readableOn(slice.color, theme.background),
+        fill: readableOn(slice.color, backdropOf(theme)),
         size: theme.labelSize,
         weight: 700,
         family: theme.fontFamily,
@@ -158,7 +159,7 @@ function drawDonut(ctx: DrawContext): SceneNode[] {
       family: theme.fontFamily,
       anchor: toRight ? 'start' : 'end',
       baseline: 'middle',
-      halo: theme.background,
+      halo: backdropOf(theme),
       haloWidth: 3,
     })
   }
@@ -345,7 +346,7 @@ function drawTreemap(ctx: DrawContext): SceneNode[] {
       },
     })
 
-    const textColor = readableOn(slice.color, theme.background)
+    const textColor = readableOn(slice.color, backdropOf(theme))
     const label = truncate(slice.label, Math.max(3, Math.floor(w / 7.2)))
     const labelWidth = measureText(label, theme.labelSize, theme.fontFamily, 700)
 

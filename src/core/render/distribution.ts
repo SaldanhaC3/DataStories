@@ -12,6 +12,7 @@ import { flatValues } from '../model'
 import type { ChartDefinition, DrawContext } from './context'
 import { formatNumber } from '../format'
 import { mix } from '../theme/contrast'
+import { backdropOf } from '../theme/themes'
 
 // ---------------------------------------------------------------------------
 // Histograma
@@ -243,7 +244,7 @@ function drawBoxplot(ctx: DrawContext): SceneNode[] {
       y: Math.min(yQ1, yQ3),
       w: boxWidth,
       h: Math.abs(yQ1 - yQ3),
-      fill: mix(theme.background, box.color, 0.55),
+      fill: mix(backdropOf(theme), box.color, 0.55),
       stroke: box.color,
       strokeWidth: 1,
       meta: {
@@ -276,7 +277,7 @@ function drawBoxplot(ctx: DrawContext): SceneNode[] {
         size: theme.footerSize,
         family: theme.fontFamily,
         anchor: 'middle',
-        halo: theme.background,
+        halo: backdropOf(theme),
         haloWidth: 2.5,
       })
     }

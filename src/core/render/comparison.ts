@@ -11,6 +11,7 @@ import type { ChartDefinition, DrawContext } from './context'
 import { measureText } from '../text'
 import { truncate } from '../format'
 import { fade, mix } from '../theme/contrast'
+import { backdropOf } from '../theme/themes'
 import { resolveVerticalCollisions, type LabelSlot } from '../annotate/collision'
 
 // ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ function drawDumbbell(ctx: DrawContext): SceneNode[] {
     const grew = b >= a
     const rodColor = second.muted && first.muted
       ? theme.mutedSeries
-      : fade(grew ? second.color : first.color, 0.5, theme.background)
+      : fade(grew ? second.color : first.color, 0.5, backdropOf(theme))
 
     nodes.push({
       t: 'line',
@@ -236,7 +237,7 @@ function drawSlope(ctx: DrawContext): SceneNode[] {
         family: font,
         anchor: 'end',
         baseline: 'middle',
-        halo: theme.background,
+        halo: backdropOf(theme),
         haloWidth: 2.5,
       },
       {
@@ -250,7 +251,7 @@ function drawSlope(ctx: DrawContext): SceneNode[] {
         family: font,
         anchor: 'start',
         baseline: 'middle',
-        halo: theme.background,
+        halo: backdropOf(theme),
         haloWidth: 2.5,
       },
     )
@@ -289,7 +290,7 @@ function drawBullet(ctx: DrawContext): SceneNode[] {
       y: center - trackHeight / 2,
       w: frame.plot.width,
       h: trackHeight,
-      fill: mix(theme.background, theme.foreground, 0.05),
+      fill: mix(backdropOf(theme), theme.foreground, 0.05),
     })
 
     const end = frame.valuePos(value)

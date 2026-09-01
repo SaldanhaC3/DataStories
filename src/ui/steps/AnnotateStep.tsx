@@ -604,6 +604,23 @@ export function AnnotateStep({
             }
           />
         </Field>
+        <Field
+          label="Link da fonte"
+          hint="O domínio aparece no rodapé ao lado da fonte — rastreável até no print."
+        >
+          <TextInput
+            value={spec.text.sourceUrl}
+            placeholder="ibge.gov.br/pnad"
+            onChange={(value) =>
+              update(
+                (draft) => {
+                  draft.text.sourceUrl = value
+                },
+                { coalesceKey: 'sourceurl' },
+              )
+            }
+          />
+        </Field>
         <Field label="Nota metodológica">
           <TextInput
             value={spec.text.note}

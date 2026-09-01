@@ -189,6 +189,18 @@ export function buildFrame(input: FrameInput): Frame {
   const footer: SceneNode[] = []
   const footerParts: string[] = []
   if (spec.text.source) footerParts.push(`Fonte: ${spec.text.source}`)
+  // O domínio da URL entra colado à fonte: dá rastreabilidade no impresso,
+  // onde um link clicável não existe.
+  if (spec.text.sourceUrl) {
+    try {
+      const domain = new URL(
+        spec.text.sourceUrl.startsWith('http') ? spec.text.sourceUrl : `https://${spec.text.sourceUrl}`,
+      ).hostname.replace(/^www\./, '')
+      footerParts.push(domain)
+    } catch {
+      // URL malformada: o texto da fonte já cumpre o papel
+    }
+  }
   if (spec.text.note) footerParts.push(spec.text.note)
   const footerText = footerParts.join('   ·   ')
   const creditWidth = spec.text.credit

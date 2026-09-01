@@ -76,8 +76,11 @@ export async function sceneToPngBlob(scene: Scene, scale = 2): Promise<Blob> {
 
     // O SVG já pinta o próprio fundo, mas um PNG sem base fica com halo cinza
     // quando o navegador aplica antialiasing nas bordas.
-    ctx.fillStyle = scene.background
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    // Fundo transparente vira PNG com alpha de verdade: não pinta nada.
+    if (scene.background !== 'transparent') {
+      ctx.fillStyle = scene.background
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+    }
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
 
     return await new Promise<Blob>((resolve, reject) => {

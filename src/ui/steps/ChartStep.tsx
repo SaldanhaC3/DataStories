@@ -435,6 +435,79 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
           </Field>
         </div>
 
+        <Field
+          label="Formato dos números"
+          hint="Estilo d3-format: ,.0f agrupa milhar sem decimais; .1% vira 12,3%; prefixe com R$ se quiser."
+        >
+          <div className="row">
+            <TextInput
+              value={spec.axes.y.format ?? ''}
+              placeholder="automático"
+              onChange={(value) =>
+                update(
+                  (draft) => {
+                    draft.axes.y.format = value === '' ? null : value
+                  },
+                  { coalesceKey: 'yformat' },
+                )
+              }
+            />
+          </div>
+          <div className="chip-row">
+            {[
+              { label: ',.0f', hint: '1.234' },
+              { label: ',.1f', hint: '1.234,5' },
+              { label: '.1%', hint: '12,3%' },
+              { label: ',.2s', hint: '1,2 mil' },
+            ].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                className="chip"
+                title={preset.hint}
+                aria-pressed={spec.axes.y.format === preset.label}
+                onClick={() =>
+                  update((draft) => {
+                    draft.axes.y.format = preset.label
+                  })
+                }
+              >
+                <span className="label">{preset.label}</span>
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <div className="row">
+          <Field label="Ticks do eixo" hint="Vazio escolhe sozinho pelo tamanho.">
+            <NumberInput
+              value={spec.axes.y.ticks}
+              min={2}
+              max={12}
+              placeholder="auto"
+              onChange={(value) =>
+                update((draft) => {
+                  draft.axes.y.ticks = value
+                })
+              }
+            />
+          </Field>
+          <Field label="Título do eixo X">
+            <TextInput
+              value={spec.axes.x.title}
+              placeholder="opcional"
+              onChange={(value) =>
+                update(
+                  (draft) => {
+                    draft.axes.x.title = value
+                  },
+                  { coalesceKey: 'xtitle' },
+                )
+              }
+            />
+          </Field>
+        </div>
+
         <Field label="Título do eixo de valores">
           <TextInput
             value={spec.axes.y.title}
@@ -530,6 +603,27 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
             }
           />
         </Field>
+
+        <Toggle
+          checked={spec.theme.overrides.background === 'transparent'}
+          label="Fundo transparente (para embutir em qualquer superfície)"
+          onChange={(value) =>
+            update((draft) => {
+              if (value) draft.theme.overrides.background = 'transparent'
+              else delete draft.theme.overrides.background
+            })
+          }
+        />
+
+        <Toggle
+          checked={spec.color.reverse}
+          label="Inverter a ordem das cores"
+          onChange={(value) =>
+            update((draft) => {
+              draft.color.reverse = value
+            })
+          }
+        />
       </Group>
     </>
   )

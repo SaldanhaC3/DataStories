@@ -17,6 +17,7 @@ import type { DrawContext } from './context'
 import { bandOrTime, drawOrder, markColor, markMuted } from './context'
 import type { ChartDefinition } from './context'
 import { valueLabelNode } from '../annotate/directLabels'
+import { backdropOf } from '../theme/themes'
 
 function curveOf(mode: string) {
   if (mode === 'smooth') return curveMonotoneX
@@ -95,7 +96,7 @@ function drawBars(ctx: DrawContext): SceneNode[] {
             catStart + subBand / 2,
             frame.orientation,
             fill,
-            { background: theme.background, size: theme.labelSize, family: theme.fontFamily },
+            { background: backdropOf(theme), size: theme.labelSize, family: theme.fontFamily },
           ),
         )
       }
@@ -255,7 +256,7 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
           family: theme.fontFamily,
           anchor: 'middle',
           baseline: 'auto',
-          halo: theme.background,
+          halo: backdropOf(theme),
           haloWidth: 2.5,
         })
       }
@@ -308,7 +309,7 @@ function drawScatter(ctx: DrawContext): SceneNode[] {
           size: theme.footerSize,
           family: theme.fontFamily,
           anchor: 'middle',
-          halo: theme.background,
+          halo: backdropOf(theme),
           haloWidth: 2.5,
         })
       }
