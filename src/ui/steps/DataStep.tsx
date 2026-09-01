@@ -11,10 +11,27 @@ import type { ChartSpec, Dataset } from '../../core/types'
 import { detectDelimiter, detectLocale, parseDelimited } from '../../core/dataset/parse'
 import { deriveDataset } from '../../core/dataset/transform'
 import { inferXColumn, inferYColumns } from '../../core/model'
+import { createDefaultSpec } from '../../core/schema'
+import { recommend } from '../../advisor/recommend'
 import { EXAMPLES } from '../../examples/samples'
 import { useEditor } from '../../state/store'
 import { DataGrid } from '../DataGrid'
 import { Field, Group, NumberInput, Segmented, Select, Toggle } from '../controls'
+
+// Extensões que o FileReader lê como texto de verdade. Qualquer coisa fora
+// daqui vira bytes binários interpretados como texto — uma tabela de lixo
+// silenciosa, que é exatamente o defeito que esta lista evita.
+const ACCEPTED_EXTENSIONS = ['.csv', '.tsv', '.txt']
+// Formatos de planilha binária: o problema não é "arquivo errado", é "esta
+// ferramenta não sabe ler isto ainda". Por isso a mensagem sugere um caminho,
+// não só recusa.
+const SPREADSHEET_EXTENSIONS = ['.xlsx', '.xls', '.ods']
+const MAX_RECOMMENDED_BYTES = 10 * 1024 * 1024
+
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot === -1 ? '' : name.slice(dot).toLowerCase()
+}
 
 export function DataStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset }) {
   const update = useEditor((s) => s.update)
@@ -22,45 +39,102 @@ export function DataStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset 
   const showToast = useEditor((s) => s.showToast)
   const [pasted, setPasted] = useState('')
   const [over, setOver] = useState(false)
+  const [reading, setReading] = useState(false)
   const fileInput = useRef<HTMLInputElement | null>(null)
 
   /**
-   * Substitui a tabela e remonta o mapeamento de colunas: manter o `encoding`
-   * antigo apontando para colunas que não existem mais é a origem clássica do
-   * "gráfico ficou vazio e não sei por quê". Em vez de zera-lo, inferimos um
-   * encoding inicial a partir dos tipos detectados — a tabela já entra com um
-   * gráfico desenhado, como se espera de uma ferramenta de um clique só.
+   * Substitui a tabela inteira a partir de `createDefaultSpec()`, preservando
+   * só o que pertence ao autor (`text`, `theme`, `layout`, `chart.type`) — tudo
+   * que é derivado do dado antigo (eixos fixados, anotações, cores por
+   * categoria, limite de linhas, faixas de histograma...) volta ao padrão.
+   * É a divisão que evita a classe inteira de bug "troquei de tabela e o
+   * gráfico ficou esquisito sem eu entender por quê": um eixo fixado em 0–100
+   * da tabela anterior não sobrevive para achatar o gráfico novo, e anotações
+   * não ficam apontando para categorias que não existem mais.
    */
   const ingest = useCallback(
     (text: string) => {
       if (!text.trim()) return
       const source = parseDelimited(text)
+      if (source.header.length === 0 || source.rows.length === 0) {
+        showToast(
+          'Não encontrei linhas e colunas nesse texto — confira se há um cabeçalho e ao menos uma linha de dados.',
+        )
+        return
+      }
       const dataset = deriveDataset(source)
       const x = inferXColumn(dataset)
       const y = inferYColumns(dataset, [x, null]).slice(0, 4)
+
+      const fresh = createDefaultSpec({ text: spec.text, theme: spec.theme, layout: spec.layout })
+      fresh.id = spec.id
+      fresh.data = source
+      fresh.encoding = { x, y, series: null, size: null, label: null, target: null }
+
+      // O conselheiro decide já na entrada dos dados, não só quando o autor
+      // chega à etapa Gráfico — quem cola 12 meses de série temporal não deve
+      // precisar navegar para descobrir que existe um gráfico de linha melhor
+      // que a barra padrão. Só troca com confiança alta; com score baixo o
+      // palpite fica pior que manter o que já estava escolhido.
+      const [best] = recommend(dataset)
+      const applyRecommendation = Boolean(best && best.score >= 0.85)
+      fresh.chart.type = applyRecommendation && best ? best.type : spec.chart.type
+
       update((draft) => {
-        draft.data = source
-        draft.encoding = { x, y, series: null, size: null, label: null, target: null }
-        draft.highlight = { series: [], categories: [] }
-        draft.transform.sortBy = null
-        draft.transform.hiddenColumns = []
-        draft.transform.hiddenRows = []
+        Object.assign(draft, fresh)
       })
+
       showToast(
         `${source.rows.length} linhas · ${source.header.length} colunas · separador "${detectDelimiter(text)}" · ${detectLocale(text)}` +
-          (y.length > 0 ? ` · ${y.length} coluna(s) de valores no gráfico` : ' · nenhuma coluna numérica detectada'),
+          (y.length > 0 ? ` · ${y.length} coluna(s) de valores no gráfico` : ' · nenhuma coluna numérica detectada') +
+          (applyRecommendation && best ? ` · gráfico de ${best.label} aplicado (${best.reason})` : ''),
       )
     },
-    [update, showToast],
+    [update, showToast, spec.text, spec.theme, spec.layout, spec.id, spec.chart.type],
   )
 
   const onFile = useCallback(
     (file: File) => {
+      const ext = extensionOf(file.name)
+
+      if (SPREADSHEET_EXTENSIONS.includes(ext)) {
+        showToast({
+          kind: 'erro',
+          message: `Arquivos ${ext} são planilhas binárias e não são lidos aqui — abra no Excel/Sheets e exporte como CSV antes de carregar.`,
+        })
+        return
+      }
+      if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+        showToast({
+          kind: 'erro',
+          message: `Arquivo "${file.name}" não reconhecido. Formatos aceitos: .csv, .tsv ou .txt.`,
+        })
+        return
+      }
+      if (file.size > MAX_RECOMMENDED_BYTES) {
+        const mb = (file.size / (1024 * 1024)).toFixed(1)
+        const proceed = confirm(
+          `O arquivo tem ${mb} MB, acima dos ~10 MB recomendados. A leitura pode demorar ou travar a aba. Continuar mesmo assim?`,
+        )
+        if (!proceed) return
+      }
+
+      setReading(true)
       const reader = new FileReader()
-      reader.onload = () => ingest(String(reader.result ?? ''))
+      reader.onload = () => {
+        setReading(false)
+        ingest(String(reader.result ?? ''))
+      }
+      reader.onerror = () => {
+        setReading(false)
+        showToast({
+          kind: 'erro',
+          message: 'Não foi possível ler o arquivo. Confira se ele não está corrompido e tente de novo.',
+        })
+      }
       reader.readAsText(file, 'utf-8')
     },
-    [ingest],
+    [ingest, showToast],
   )
 
   return (
@@ -91,7 +165,12 @@ export function DataStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset 
           >
             Usar esta tabela
           </button>
-          <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
+          <button
+            type="button"
+            className="btn"
+            disabled={reading}
+            onClick={() => fileInput.current?.click()}
+          >
             Abrir CSV
           </button>
         </div>
@@ -110,20 +189,25 @@ export function DataStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset 
 
         <div
           className={over ? 'dropzone over' : 'dropzone'}
+          aria-busy={reading}
+          aria-disabled={reading}
           onDragOver={(e) => {
             e.preventDefault()
-            setOver(true)
+            if (!reading) setOver(true)
           }}
           onDragLeave={() => setOver(false)}
           onDrop={(e) => {
             e.preventDefault()
             setOver(false)
+            if (reading) return
             const file = e.dataTransfer.files?.[0]
             if (file) onFile(file)
           }}
-          onClick={() => fileInput.current?.click()}
+          onClick={() => {
+            if (!reading) fileInput.current?.click()
+          }}
         >
-          Arraste um arquivo CSV ou TSV para cá
+          {reading ? 'Lendo arquivo…' : 'Arraste um arquivo CSV ou TSV para cá'}
         </div>
       </Group>
 

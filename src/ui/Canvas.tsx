@@ -8,12 +8,13 @@
  * espera de uma ferramenta de acabamento.
  */
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { ChartSpec, Scene, SceneNode } from '../core/types'
+import type { ChartSpec, Scene, SceneNode, ScenePoint } from '../core/types'
 import { getChartDefinition } from '../core/render'
 import { formatNumber } from '../core/format'
 import { useEditor } from '../state/store'
+import { ColorInput, Chip } from './controls'
 
 interface HoverState {
   x: number
@@ -25,6 +26,19 @@ interface HoverState {
   key: string
   /** Posição do cursor em unidades do SVG, para o crosshair. */
   svgX: number
+  /** Largura da moldura em pixels de tela — o tooltip é posicionado nessa régua. */
+  shellW: number
+}
+
+/** Marca clicada, com a posição do clique para ancorar o popover de edição. */
+interface MarkSelection {
+  series: string
+  category: string
+  value: number
+  x: number
+  y: number
+  shellW: number
+  shellH: number
 }
 
 /**
@@ -192,6 +206,7 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [hover, setHover] = useState<HoverState | null>(null)
+  const [selected, setSelected] = useState<MarkSelection | null>(null)
   const update = useEditor((s) => s.update)
   const selectAnnotation = useEditor((s) => s.selectAnnotation)
   const setStep = useEditor((s) => s.setStep)
@@ -247,60 +262,106 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
   )
 
   /**
-   * Nas linhas, quem recebe o hover é o caminho inteiro (valor NaN no rastro).
-   * O número certo é o da marca da mesma série mais próxima do cursor — este
-   * método o acha entre os nós já desenhados, sem recalcular nada do modelo.
+   * Índice de pontos ordenado por x.
+   *
+   * A cena entrega as posições prontas (`scene.points`), então achar o valor
+   * sob o cursor é uma busca binária num array — não uma varredura do DOM com
+   * `getBoundingClientRect` por elemento, que era o custo do desenho anterior e
+   * rodava a cada movimento do mouse.
    */
-  const nearestDatum = useCallback(
-    (series: string, svgX: number): { category: string; value: number } | null => {
-      const svg = svgRef.current
-      if (!svg) return null
-      const svgRect = svg.getBoundingClientRect()
-      const scale = svgRect.width > 0 ? scene.width / svgRect.width : 1
-      let best: { category: string; value: number; dist: number } | null = null
-      for (const el of svg.querySelectorAll<SVGElement>('[data-series]')) {
-        if (el.getAttribute('data-series') !== series) continue
-        const value = Number(el.getAttribute('data-value'))
-        if (!Number.isFinite(value)) continue
-        const box = el.getBoundingClientRect()
-        if (box.width === 0 && box.height === 0) continue
-        const cx = (box.left + box.width / 2 - svgRect.left) * scale
-        const dist = Math.abs(cx - svgX)
-        if (!best || dist < best.dist) {
-          best = { category: el.getAttribute('data-category') ?? '', value, dist }
+  const index = useMemo(
+    () => [...scene.points].sort((a, b) => a.x - b.x),
+    [scene.points],
+  )
+
+  const nearestPoint = useCallback(
+    (svgX: number, svgY: number): ScenePoint | null => {
+      if (index.length === 0) return null
+
+      let lo = 0
+      let hi = index.length - 1
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (index[mid].x < svgX) lo = mid + 1
+        else hi = mid
+      }
+
+      // Janela em torno do x mais próximo. O peso maior no eixo horizontal faz
+      // o cursor "grudar" na coluna de dados, como num crosshair: entre duas
+      // séries empilhadas na vertical, quem decide é a distância vertical.
+      const TOLERANCIA = 32
+      let best: ScenePoint | null = null
+      let bestScore = Infinity
+      const consider = (i: number) => {
+        const dx = index[i].x - svgX
+        const dy = index[i].y - svgY
+        const score = dx * dx * 4 + dy * dy
+        if (score < bestScore) {
+          bestScore = score
+          best = index[i]
         }
       }
-      return best ? { category: best.category, value: best.value } : null
+      for (let i = lo; i < index.length && index[i].x - svgX <= TOLERANCIA; i++) consider(i)
+      for (let i = lo - 1; i >= 0 && svgX - index[i].x <= TOLERANCIA; i--) consider(i)
+      return best
     },
-    [scene.width],
+    [index],
   )
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
-      // Tooltip: qualquer marca com rastro mostra série, categoria e valor.
+      // Tooltip. O cursor não precisa acertar a marca: basta estar dentro do
+      // painel, e o ponto mais próximo responde. É como se lê um gráfico de
+      // linha no jornal — ninguém mira no pixel do ponto.
       if (interactive && !drag) {
-        const target = event.target as Element
-        const series = target.getAttribute('data-series')
-        const shell = svgRef.current?.parentElement
-        if (series != null && shell) {
-          const svgRect = svgRef.current?.getBoundingClientRect()
-          const scale = svgRect && svgRect.width > 0 ? scene.width / svgRect.width : 1
-          const svgX = svgRect ? (event.clientX - svgRect.left) * scale : 0
-          const value = Number(target.getAttribute('data-value'))
-          const rect = shell.getBoundingClientRect()
-          const category = target.getAttribute('data-category') ?? ''
-          const nearest = Number.isFinite(value) ? null : nearestDatum(series, svgX)
-          setHover({
-            x: event.clientX - rect.left,
-            y: event.clientY - rect.top,
-            series,
-            category: nearest?.category ?? category,
-            value: Number.isFinite(value) ? value : (nearest?.value ?? Number.NaN),
-            key: highlightsCategories ? category : series,
-            svgX,
-          })
-        } else if (hover) {
-          setHover(null)
+        const svg = svgRef.current
+        const shell = svg?.parentElement
+        const svgRect = svg?.getBoundingClientRect()
+
+        if (svg && shell && svgRect && svgRect.width > 0) {
+          const scale = scene.width / svgRect.width
+          const svgX = (event.clientX - svgRect.left) * scale
+          const svgY = (event.clientY - svgRect.top) * scale
+          const { plot } = scene
+          const dentroDoPainel =
+            svgX >= plot.x - 8 &&
+            svgX <= plot.x + plot.width + 8 &&
+            svgY >= plot.y - 8 &&
+            svgY <= plot.y + plot.height + 8
+
+          // Uma marca sob o cursor tem prioridade sobre o vizinho mais próximo:
+          // em barras agrupadas, o ponteiro em cima de uma barra deve ler
+          // aquela barra, não a de centro mais próximo.
+          const target = event.target as Element
+          const direta = target.getAttribute('data-series')
+          const valorDireto = Number(target.getAttribute('data-value'))
+
+          const achado =
+            direta != null && Number.isFinite(valorDireto)
+              ? {
+                  series: direta,
+                  category: target.getAttribute('data-category') ?? '',
+                  value: valorDireto,
+                }
+              : dentroDoPainel
+                ? nearestPoint(svgX, svgY)
+                : null
+
+          if (achado) {
+            const rect = shell.getBoundingClientRect()
+            setHover({
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+              series: achado.series,
+              category: achado.category,
+              value: achado.value,
+              key: highlightsCategories ? achado.category : achado.series,
+              svgX,
+              shellW: rect.width,
+            })
+          } else if (hover) {
+            setHover(null)
+          }
         }
       }
 
@@ -324,7 +385,17 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         { coalesceKey: `drag:${drag.id}` },
       )
     },
-    [drag, hover, interactive, highlightsCategories, nearestDatum, scaleOf, scene.width, scene.plot.width, scene.plot.height, update],
+    [
+      drag,
+      hover,
+      interactive,
+      highlightsCategories,
+      nearestPoint,
+      scaleOf,
+      scene.width,
+      scene.plot,
+      update,
+    ],
   )
 
   const endDrag = useCallback(
@@ -359,7 +430,11 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
       const series = target.getAttribute('data-series')
       const category = target.getAttribute('data-category')
       const key = highlightsCategories ? category : series
-      if (!key) return
+      if (!key) {
+        // Clique no vazio deseleciona: é o mesmo gesto de fechar o popover.
+        setSelected(null)
+        return
+      }
 
       update((draft) => {
         const list = highlightsCategories ? draft.highlight.categories : draft.highlight.series
@@ -367,9 +442,55 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
         if (index >= 0) list.splice(index, 1)
         else list.push(key)
       })
+
+      const shell = svgRef.current?.parentElement
+      const rect = shell?.getBoundingClientRect()
+      setSelected({
+        series: series ?? '',
+        category: category ?? '',
+        value: Number(target.getAttribute('data-value')),
+        x: rect ? event.clientX - rect.left : 0,
+        y: rect ? event.clientY - rect.top : 0,
+        shellW: rect?.width ?? 0,
+        shellH: rect?.height ?? 0,
+      })
     },
     [interactive, drag, highlightsCategories, update, selectAnnotation, setStep],
   )
+
+  // Esc fecha o popover da marca — o atalho global do App cuida dos diálogos,
+  // mas não sabe que esta seleção existe.
+  useEffect(() => {
+    if (!selected) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelected(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected])
+
+  /**
+   * Onde a cor individual desta marca vive no spec.
+   *
+   * Uma série só: a chave é o rótulo da categoria (lido por `markColor`).
+   * Várias séries: chave composta `série :: categoria`, também lida pela
+   * engine — pinta uma única barra sem tocar nas irmãs da série. Gráficos de
+   * composição (rosca, waffle, treemap) já liam overrides por categoria antes.
+   */
+  const selectionOverrideKey = selected
+    ? highlightsCategories || scene.series.length <= 1
+      ? selected.category
+      : `${selected.series} :: ${selected.category}`
+    : null
+  const selectionHighlighted = selected
+    ? (highlightsCategories ? spec.highlight.categories : spec.highlight.series).includes(
+        highlightsCategories ? selected.category : selected.series,
+      )
+    : false
+  const selectionFallback =
+    selected?.series != null && selected.series !== ''
+      ? scene.series.find((s) => s.name === selected.series)?.color ?? '#1f6feb'
+      : '#1f6feb'
 
   /** Crosshair faz sentido onde a posição ao longo do eixo x é leitura. */
   const showCrosshair =
@@ -420,7 +541,16 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
       {hover && Number.isFinite(hover.value) && (
         <div
           className="chart-tooltip"
-          style={{ left: Math.min(hover.x + 14, scene.width - 40), top: Math.max(hover.y - 44, 4) }}
+          // `hover.x/y` estão em pixels de tela e `scene.width` em unidades do
+          // SVG: como o SVG é escalado para caber na moldura, misturar as duas
+          // réguas fazia o limite não valer nada e o tooltip escapava pela
+          // direita. Aqui a conta toda é feita na largura real da moldura, e
+          // perto da borda o balão vira para o outro lado do cursor.
+          style={{
+            left: hover.x + (hover.x > hover.shellW - 170 ? -14 : 14),
+            top: Math.max(hover.y - 44, 4),
+            transform: hover.x > hover.shellW - 170 ? 'translateX(-100%)' : undefined,
+          }}
         >
           <b>
             {hoverColor && <i className="swatch" style={{ background: hoverColor }} />}
@@ -431,6 +561,65 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
             {formatNumber(hover.value, null, spec.data.locale)}
             {spec.axes.y.unit ? ` ${spec.axes.y.unit}` : ''}
           </em>
+        </div>
+      )}
+      {selected && interactive && (
+        <div
+          className="mark-popover"
+          // Perto da borda direita o popover vira para não sair do quadro —
+          // mesma régua de tela do tooltip.
+          style={{
+            left: Math.max(8, Math.min(selected.x, selected.shellW - 216)),
+            // ~130px é a altura do popover; perto da base ele sobe em vez de
+            // ser cortado pelo overflow da moldura.
+            top: Math.max(8, Math.min(selected.y + 16, selected.shellH - 140)),
+          }}
+        >
+          <header className="mark-popover-head">
+            <b>{selected.series || selected.category}</b>
+            {selected.category && selected.series && <span>{selected.category}</span>}
+            <button
+              type="button"
+              aria-label="Fechar edição da marca"
+              onClick={() => setSelected(null)}
+            >
+              ✕
+            </button>
+          </header>
+          <div className="mark-popover-body">
+            <Chip
+              label={selectionHighlighted ? 'Destacado' : 'Destacar'}
+              active={selectionHighlighted}
+              onClick={() =>
+                update((draft) => {
+                  const list = highlightsCategories
+                    ? draft.highlight.categories
+                    : draft.highlight.series
+                  const key = highlightsCategories ? selected.category : selected.series
+                  const index = list.indexOf(key)
+                  if (index >= 0) list.splice(index, 1)
+                  else list.push(key)
+                })
+              }
+            />
+            <ColorInput
+              value={selectionOverrideKey ? spec.color.overrides[selectionOverrideKey] ?? null : null}
+              fallback={selectionFallback}
+              onChange={(value) =>
+                update((draft) => {
+                  if (!selectionOverrideKey) return
+                  if (value === null) delete draft.color.overrides[selectionOverrideKey]
+                  else draft.color.overrides[selectionOverrideKey] = value
+                })
+              }
+            />
+          </div>
+          {Number.isFinite(selected.value) && (
+            <footer className="mark-popover-foot">
+              {formatNumber(selected.value, null, spec.data.locale)}
+              {spec.axes.y.unit ? ` ${spec.axes.y.unit}` : ''}
+            </footer>
+          )}
         </div>
       )}
     </div>

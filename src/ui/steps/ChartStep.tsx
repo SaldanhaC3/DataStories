@@ -16,6 +16,19 @@ import { useEditor } from '../../state/store'
 import { ChartIcon } from '../ChartIcon'
 import { Chip, Field, Group, NumberInput, Segmented, Select, TextInput, Toggle } from '../controls'
 
+/**
+ * Receitas prontas de formato de número: cobrem o pedido comum ("sem casas",
+ * "percentual") sem obrigar quem não conhece d3-format a decifrar um
+ * especificador cru. Vazio = automático, resolvido em frame.ts.
+ */
+const NUMBER_FORMAT_PRESETS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Automático' },
+  { value: ',.0f', label: 'Inteiro' },
+  { value: ',.1f', label: 'Uma casa' },
+  { value: ',.2f', label: 'Duas casas' },
+  { value: '.0%', label: 'Percentual' },
+]
+
 export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset }) {
   const update = useEditor((s) => s.update)
   const definition = getChartDefinition(spec.chart.type)
@@ -396,6 +409,39 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
       </Group>
 
       <Group title="Eixos">
+        {!definition.bare && (
+          <Field
+            label="Orientação"
+            hint="Em barras, troca vertical ↔ horizontal. Nos demais, troca a coluna do eixo X com a primeira de valores."
+          >
+            <button
+              type="button"
+              className="btn tiny"
+              onClick={() =>
+                update((draft) => {
+                  // Barras têm um tipo para cada orientação; trocar o tipo
+                  // preserva todo o resto do spec (cores, eixos, anotações).
+                  if (draft.chart.type === 'bar') {
+                    draft.chart.type = 'bar-horizontal'
+                    return
+                  }
+                  if (draft.chart.type === 'bar-horizontal') {
+                    draft.chart.type = 'bar'
+                    return
+                  }
+                  // Nos demais, o "trocar eixos" é trocar as colunas de lugar.
+                  const x = draft.encoding.x
+                  if (!x || draft.encoding.y.length === 0) return
+                  const firstY = draft.encoding.y[0]
+                  draft.encoding.y = [x, ...draft.encoding.y.slice(1)]
+                  draft.encoding.x = firstY
+                })
+              }
+            >
+              ⇄ Trocar eixos (X ↔ Y)
+            </button>
+          </Field>
+        )}
         <div className="row">
           <Field label="Mínimo">
             <NumberInput
@@ -437,45 +483,39 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
 
         <Field
           label="Formato dos números"
-          hint="Estilo d3-format: ,.0f agrupa milhar sem decimais; .1% vira 12,3%; prefixe com R$ se quiser."
+          hint="Receitas prontas cobrem o comum. Quem conhece a sintaxe d3-format pode digitar um especificador próprio no campo avançado abaixo — ele vence a receita escolhida acima."
         >
-          <div className="row">
-            <TextInput
-              value={spec.axes.y.format ?? ''}
-              placeholder="automático"
-              onChange={(value) =>
-                update(
-                  (draft) => {
-                    draft.axes.y.format = value === '' ? null : value
-                  },
-                  { coalesceKey: 'yformat' },
-                )
-              }
-            />
-          </div>
-          <div className="chip-row">
-            {[
-              { label: ',.0f', hint: '1.234' },
-              { label: ',.1f', hint: '1.234,5' },
-              { label: '.1%', hint: '12,3%' },
-              { label: ',.2s', hint: '1,2 mil' },
-            ].map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                className="chip"
-                title={preset.hint}
-                aria-pressed={spec.axes.y.format === preset.label}
-                onClick={() =>
-                  update((draft) => {
-                    draft.axes.y.format = preset.label
-                  })
-                }
-              >
-                <span className="label">{preset.label}</span>
-              </button>
-            ))}
-          </div>
+          <Segmented
+            value={
+              NUMBER_FORMAT_PRESETS.some((preset) => preset.value === (spec.axes.y.format ?? ''))
+                ? spec.axes.y.format ?? ''
+                : ''
+            }
+            options={NUMBER_FORMAT_PRESETS.map(({ value, label }) => ({ value, label }))}
+            onChange={(value) =>
+              update((draft) => {
+                draft.axes.y.format = value === '' ? null : value
+              })
+            }
+          />
+        </Field>
+
+        <Field
+          label="Formato avançado (opcional)"
+          hint="Especificador d3-format cru, ex.: ,.2s vira 1,2 mil. Deixe vazio para usar a receita acima."
+        >
+          <TextInput
+            value={spec.axes.y.format ?? ''}
+            placeholder="automático"
+            onChange={(value) =>
+              update(
+                (draft) => {
+                  draft.axes.y.format = value === '' ? null : value
+                },
+                { coalesceKey: 'yformat' },
+              )
+            }
+          />
         </Field>
 
         <div className="row">
@@ -484,7 +524,7 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
               value={spec.axes.y.ticks}
               min={2}
               max={12}
-              placeholder="auto"
+              placeholder="automático"
               onChange={(value) =>
                 update((draft) => {
                   draft.axes.y.ticks = value
@@ -538,6 +578,15 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
           onChange={(value) =>
             update((draft) => {
               draft.axes.y.grid = value
+            })
+          }
+        />
+        <Toggle
+          checked={spec.axes.y.visible}
+          label="Mostrar régua de valores"
+          onChange={(value) =>
+            update((draft) => {
+              draft.axes.y.visible = value
             })
           }
         />

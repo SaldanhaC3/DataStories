@@ -6,7 +6,15 @@
  * fundo, faixas de anotação, grade, marcas, rótulos, anotações por cima.
  */
 
-import type { ChartSpec, ChartType, Dataset, Scene, SceneNode, Theme } from '../types'
+import type {
+  ChartSpec,
+  ChartType,
+  Dataset,
+  Scene,
+  SceneNode,
+  ScenePoint,
+  Theme,
+} from '../types'
 import { buildFrame } from '../frame'
 import { buildModel, type ChartModel } from '../model'
 import { measureDirectLabels, renderDirectLabels } from '../annotate/directLabels'
@@ -170,7 +178,21 @@ export function renderChart(options: RenderOptions): Scene {
 
   nodes.push(...annotations.below)
   nodes.push(...frame.chrome.axes)
-  nodes.push(...definition.draw({ spec, model, theme, frame, locale }))
+
+  const points: ScenePoint[] = []
+  const marks = definition.draw({
+    spec,
+    model,
+    theme,
+    frame,
+    locale,
+    collectPoint: (point) => points.push(point),
+  })
+  // Marcas que ja existem uma por observacao (barras, dispersao, pirulito,
+  // fatias) entram no indice de graca, lendo a geometria que elas mesmas tem.
+  // So quem desenha a serie como um caminho unico precisa chamar collectPoint.
+  if (points.length === 0) collectFromMarks(marks, points)
+  nodes.push(...marks)
 
   if (wantsDirectLabels) {
     nodes.push(...renderDirectLabels(frame, model, spec.labels, theme))
@@ -187,6 +209,29 @@ export function renderChart(options: RenderOptions): Scene {
     nodes,
     series: model.series.map((s) => ({ name: s.name, color: s.color, muted: s.muted })),
     categories: model.categoryLabels,
+    points,
+  }
+}
+
+/**
+ * Deriva o indice de hover da geometria das proprias marcas.
+ *
+ * O ponto de ancoragem e o centro do retangulo ou do circulo. Para uma barra
+ * isso poe o alvo no meio dela, que e onde o cursor naturalmente esta quando a
+ * pessoa quer ler aquele valor.
+ */
+function collectFromMarks(nodes: SceneNode[], out: ScenePoint[]): void {
+  for (const node of nodes) {
+    if (node.t === 'g') {
+      collectFromMarks(node.children, out)
+      continue
+    }
+    if (!node.meta) continue
+    if (node.t === 'rect') {
+      out.push({ ...node.meta, x: node.x + node.w / 2, y: node.y + node.h / 2 })
+    } else if (node.t === 'circle') {
+      out.push({ ...node.meta, x: node.cx, y: node.cy })
+    }
   }
 }
 

@@ -11,10 +11,31 @@
   --panel: #ffffff;
   --panel-alt: #f7f8fa;
   --border: #e3e7ec;
-  --border-strong: #c9d1da;
+  /*
+   * --border-strong precisa marcar a borda de inputs/selects contra o fundo
+   * branco com no mínimo 3:1 (WCAG 1.4.11, contraste de componente de UI).
+   * O tom antigo (#c9d1da) media só ~1,54:1 sobre #ffffff. #8d9299 mantém a
+   * mesma matiz azul-acinzentada (mesma proporção r:g:b, só mais escura) e
+   * mede ~3,13:1 sobre #ffffff — medido do mesmo jeito que --muted-soft acima.
+   */
+  --border-strong: #8d9299;
   --text: #14181d;
   --muted: #5f6873;
-  --muted-soft: #98a1ac;
+  /*
+   * --muted-soft precisa carregar texto pequeno (títulos de grupo, dicas,
+   * notas, tipo de coluna) e antes falhava a WCAG: o tom antigo (#98a1ac)
+   * media ~2,62:1 sobre #ffffff e ~2,46:1 sobre --panel-alt (#f7f8fa) — bem
+   * abaixo dos 4,5:1 exigidos para texto normal. #68717d mede 4,95:1 sobre
+   * #ffffff e 4,65:1 sobre #f7f8fa (calculado com a fórmula de luminância
+   * relativa de src/core/theme/contrast.ts, replicada num script node ad-hoc
+   * — ambos os fundos passam a AA). Use esta variável só em TEXTO.
+   */
+  --muted-soft: #68717d;
+  /*
+   * Tom claro original, preservado só para uso DECORATIVO (não é texto e não
+   * precisa de 4,5:1): o pontinho de dica do linter e bordas de hover sutis.
+   */
+  --muted-faint: #98a1ac;
   --accent: #1a6ba8;
   --accent-soft: #e7f0f7;
   --danger: #b3261e;
@@ -34,6 +55,40 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+/*
+ * Some visualmente mas continua no DOM para leitor de tela: caption de
+ * tabela, título de diálogo, rótulo de input que já tem contexto visual
+ * suficiente sem repetir texto na tela. Receita clássica (não usa
+ * `display:none`/`visibility:hidden`, que some também do leitor de tela).
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Variante que volta a ficar visível ao receber foco — para um link do tipo
+   "pular para o gráfico" que só aparece quando navegado via teclado. */
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 4px 8px;
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 /* Barras de rolagem discretas, que não competem com o conteúdo. */
@@ -58,6 +113,15 @@
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    /*
+     * Zerar só a duração não bastava: o Canvas aplica um `animationDelay`
+     * inline (até 360ms) para escalonar a entrada das marcas, e um delay
+     * inline vence duração zerada — as marcas continuavam entrando em
+     * cascata visível. `!important` aqui é o único jeito de vencer o inline.
+     * Também trava a contagem em 1 rodada, caso alguma animação tenha loop.
+     */
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 
@@ -125,6 +189,26 @@ textarea {
   flex: 1;
 }
 
+/* Estado do autosave: texto discreto, não compete com os botões ao lado. */
+.save-state {
+  font-size: 11.5px;
+  color: var(--muted-soft);
+  white-space: nowrap;
+}
+
+/*
+ * Variante de falha. A marcação hoje não traz uma classe/atributo dedicado
+ * (só o texto muda), então cobrimos as duas formas mais prováveis de vir a
+ * ganhar um marcador — classe `.falhou` ou `data-state="falhou"` — como CSS
+ * defensivo: se nenhuma das duas aparecer, nada quebra, só falta o destaque
+ * de cor na mensagem de erro do autosave.
+ */
+.save-state.falhou,
+.save-state[data-state='falhou'] {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 400px 1fr;
@@ -188,6 +272,10 @@ textarea {
   background: rgba(0, 0, 0, 0.015);
 }
 
+.step-tab:active {
+  background: rgba(0, 0, 0, 0.04);
+}
+
 .step-tab[aria-selected='true'] {
   color: var(--accent);
   border-bottom-color: var(--accent);
@@ -208,10 +296,20 @@ textarea {
 .panel-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  /* Um pouco mais de respiro no topo do que nas laterais: o primeiro grupo
+     de cada etapa não deve colar direto na borda das abas. */
+  padding: 20px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  /*
+   * Escala de espaçamento do painel, para não ter mais valores avulsos:
+   * 20px entre grupos (--space-lg), 12px dentro de um grupo entre campos
+   * (--space-md, ver .group), 6px entre rótulo/dica e o controle (--space-sm,
+   * ver .field), 8px num .row de controles lado a lado. Os quatro cobrem o
+   * painel inteiro; não mexi em espaçamentos fora dele (grade, lint, etc.)
+   * para não arriscar layouts que outros agentes ainda estão ajustando.
+   */
+  gap: 20px;
 }
 
 .stage {
@@ -312,27 +410,146 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------------- popover da marca clicada */
+
+.mark-popover {
+  position: absolute;
+  z-index: 6;
+  width: 208px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.mark-popover-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mark-popover-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mark-popover-head span {
+  color: var(--muted-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mark-popover-head button {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--muted-soft);
+  cursor: pointer;
+  padding: 2px 4px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.mark-popover-head button:hover {
+  color: var(--text);
+}
+
+.mark-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mark-popover-foot {
+  color: var(--muted-soft);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+/* --------------------------------------------------- alça de redimensionar */
+
+.resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  z-index: 7;
+  border-radius: 4px;
+}
+
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  background:
+    linear-gradient(135deg, transparent 0 46%, var(--border-strong) 46% 54%, transparent 54% 70%,
+      var(--border-strong) 70% 78%, transparent 78%);
+}
+
+.resize-handle:hover::before,
+.resize-handle:focus-visible::before {
+  background:
+    linear-gradient(135deg, transparent 0 46%, var(--accent) 46% 54%, transparent 54% 70%,
+      var(--accent) 70% 78%, transparent 78%);
+}
+
 /* ------------------------------------------------------------------ blocos */
 
 .group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+}
+
+/*
+ * Grupos consecutivos ganham uma linha de separação + respiro antes dela,
+ * em vez de só depender do gap do flex — com muitos controles empilhados,
+ * essa borda é o que deixa claro "aqui começa outro assunto" ao rolar
+ * rápido. O primeiro grupo da etapa não recebe borda (nada antes dele).
+ */
+.group + .group {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .group > h3 {
   margin: 0;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
   color: var(--muted-soft);
+  /*
+   * "Grudento" dentro do painel rolável: em etapas com muitos controles, o
+   * título do grupo atual continua visível como contexto em vez de sumir
+   * assim que a rolagem passa dele. `top: 0` é relativo ao .panel-body (o
+   * ancestral com overflow-y), e o fundo sólido evita que o conteúdo de
+   * baixo apareça "atravessando" o texto ao rolar por baixo do título.
+   */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  padding: 2px 0;
+  margin: -2px 0 0;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .field > label {
@@ -404,7 +621,17 @@ textarea::placeholder {
 
 .btn:hover:not(:disabled) {
   background: var(--panel-alt);
-  border-color: var(--muted-soft);
+  border-color: var(--muted-faint);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--border);
+}
+
+.btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .btn:disabled {
@@ -435,6 +662,9 @@ textarea::placeholder {
 }
 
 .btn.tiny {
+  /* Piso de 24px de alvo de toque (WCAG 2.5.8) ganho por padding vertical,
+     não por fonte maior — o layout compacto continua compacto. */
+  min-height: 24px;
   padding: 3px 7px;
   font-size: 11.5px;
   font-weight: 600;
@@ -467,6 +697,20 @@ textarea::placeholder {
 
 .segmented button:last-child {
   border-right: 0;
+}
+
+.segmented button:hover:not([aria-pressed='true']):not(:disabled) {
+  background: var(--panel-alt);
+  color: var(--text);
+}
+
+.segmented button:active:not(:disabled) {
+  background: var(--border);
+}
+
+.segmented button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .segmented button[aria-pressed='true'] {
@@ -517,8 +761,12 @@ textarea::placeholder {
 }
 
 .chart-option:hover {
-  border-color: var(--muted-soft);
+  border-color: var(--muted-faint);
   color: var(--text);
+}
+
+.chart-option:active {
+  background: var(--panel-alt);
 }
 
 .chart-option[aria-pressed='true'] {
@@ -551,6 +799,48 @@ textarea::placeholder {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.45;
+}
+
+/*
+ * Bloco de erro da etapa Publicar (ex.: falha ao gerar PNG/embed). CSS
+ * defensivo: a estrutura exata (título + mensagem + dois botões) ainda pode
+ * mudar de nome interno, então os seletores abaixo miram o `.btn` que já
+ * existe em qualquer wrapper, sem exigir uma classe extra de "ações".
+ */
+.panel-error {
+  border: 1px solid #f0c6c2;
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  background: #fdeceb;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-error strong,
+.panel-error h4 {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+.panel-error p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+/* Os dois botões de ação, onde quer que fiquem agrupados dentro do bloco. */
+.panel-error .row,
+.panel-error .panel-error-actions {
+  margin-top: 2px;
+  gap: 8px;
+}
+
+.panel-error .btn {
+  flex: none;
 }
 
 /* ------------------------------------------------------------------ grade */
@@ -637,13 +927,20 @@ table.data-grid thead th.th-hidden .col-actions {
 }
 
 .col-btn {
+  /* Alvo de toque mínimo de 24×24 (WCAG 2.5.8): antes tinha ~15×17px por
+     causa do padding apertado. Ganha área com padding + min-width/height,
+     mantendo a fonte pequena — o cabeçalho da grade continua enxuto. */
   appearance: none;
   border: 0;
   background: transparent;
   color: var(--muted-soft);
   font-size: 11px;
   line-height: 1;
-  padding: 2px 3px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px;
+  display: inline-grid;
+  place-items: center;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -653,13 +950,38 @@ table.data-grid thead th.th-hidden .col-actions {
   color: var(--accent);
 }
 
+.col-btn:active {
+  background: var(--accent-soft);
+  filter: brightness(0.96);
+}
+
+/* Ação destrutiva (excluir coluna) fica visualmente separada da não
+   destrutiva (ocultar) mesmo em repouso, não só no hover — para não
+   depender só de posição para diferenciar "oculto" de "irreversível". */
+.col-btn.danger {
+  color: #c96b64;
+}
+
 .col-btn.danger:hover {
   background: #fdeaea;
   color: var(--danger);
 }
 
+.col-btn.danger:active {
+  background: #fbdada;
+}
+
 table.data-grid td.col-hidden input,
 table.data-grid th.th-hidden input {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+/* Linha oculta: mesmo tratamento visual da coluna oculta acima — os campos
+   da linha ficam apagados e riscados, sinalizando "fora do gráfico, mas
+   ainda nos dados" sem precisar de outra cor. Não risca a própria célula de
+   índice (número + ações), só os dados. */
+table.data-grid tr.row-hidden td input {
   opacity: 0.4;
   text-decoration: line-through;
 }
@@ -676,13 +998,83 @@ table.data-grid th.th-hidden input {
 }
 
 .row-index {
-  width: 34px;
-  text-align: right;
-  padding: 4px 6px;
+  /* Alargado de 34px porque agora guarda também os botões de ocultar/excluir
+     linha (espelho de .col-head/.col-actions, mas na vertical da grade). */
+  width: 62px;
+  padding: 4px 5px 4px 6px;
   color: var(--muted-soft);
   font-size: 10.5px;
   background: var(--panel-alt);
   font-variant-numeric: tabular-nums;
+}
+
+.row-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.row-number {
+  text-align: right;
+}
+
+/* Espelha .col-actions: só aparece com a linha em foco/hover, ou já
+   permanece visível se a linha estiver oculta (mesmo critério do cabeçalho
+   de coluna, que também revela as ações quando th.th-hidden). */
+.row-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+table.data-grid tbody tr:hover .row-actions,
+table.data-grid tbody tr.row-hidden .row-actions,
+table.data-grid tbody tr:focus-within .row-actions {
+  opacity: 1;
+}
+
+/* .row-btn espelha .col-btn (mesmo piso de alvo de toque de 24×24,
+   WCAG 2.5.8) e .row-btn.danger espelha .col-btn.danger — a exclusão de
+   linha fica visualmente separada da ação de ocultar, mesmo em repouso. */
+.row-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted-soft);
+  font-size: 11px;
+  line-height: 1;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.row-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.row-btn:active {
+  background: var(--accent-soft);
+  filter: brightness(0.96);
+}
+
+.row-btn.danger {
+  color: #c96b64;
+}
+
+.row-btn.danger:hover {
+  background: #fdeaea;
+  color: var(--danger);
+}
+
+.row-btn.danger:active {
+  background: #fbdada;
 }
 
 /* ------------------------------------------------------------------ linter */
@@ -728,7 +1120,8 @@ table.data-grid th.th-hidden input {
 }
 
 .lint-dot.dica {
-  background: var(--muted-soft);
+  /* Decorativo (não é texto): mantém o tom claro original. */
+  background: var(--muted-faint);
 }
 
 .lint-item strong {
@@ -793,6 +1186,8 @@ table.data-grid th.th-hidden input {
 }
 
 .chip {
+  /* Piso de 24px de alvo de toque (WCAG 2.5.8), ganho por padding. */
+  min-height: 24px;
   appearance: none;
   border: 1px solid var(--border-strong);
   background: var(--panel);
@@ -808,8 +1203,12 @@ table.data-grid th.th-hidden input {
 }
 
 .chip:hover {
-  border-color: var(--muted-soft);
+  border-color: var(--muted-faint);
   color: var(--text);
+}
+
+.chip:active {
+  background: var(--panel-alt);
 }
 
 .chip[aria-pressed='true'] {
@@ -851,6 +1250,16 @@ table.data-grid th.th-hidden input {
   flex-direction: column;
   gap: 6px;
   background: var(--panel);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.theme-option:hover:not([aria-pressed='true']) {
+  border-color: var(--muted-faint);
+  background: var(--panel-alt);
+}
+
+.theme-option:active {
+  background: var(--border);
 }
 
 .theme-option[aria-pressed='true'] {
@@ -929,11 +1338,38 @@ table.data-grid th.th-hidden input {
   color: var(--muted);
 }
 
-.toast {
+/*
+ * Duas .toast-region ficam sempre no DOM (uma role="status"/polite para
+ * avisos comuns, outra role="alert"/assertive para erros) porque trocar o
+ * `role` de uma região viva em cima da hora é inconsistente entre leitores
+ * de tela — cada uma só ganha conteúdo quando o toast atual bate com seu
+ * "kind". Como o estado só guarda um toast por vez, as duas nunca têm
+ * conteúdo ao mesmo tempo; ainda assim ambas usam a mesma âncora fixa e
+ * empilhariam de baixo pra cima com gap se isso um dia deixar de ser verdade.
+ */
+.toast-region {
   position: fixed;
+  inset-inline: 0;
   bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+
+/* Região sem toast ativo não deve reservar espaço nem capturar clique. */
+.toast-region:empty {
+  display: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 480px);
   background: #16191d;
   color: #fff;
   padding: 9px 16px;
@@ -941,7 +1377,80 @@ table.data-grid th.th-hidden input {
   font-size: 13px;
   font-weight: 600;
   box-shadow: var(--shadow);
-  z-index: 40;
+}
+
+.toast span {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Variante de erro: não some sozinha (por isso sempre tem botão de fechar),
+ * então precisa se diferenciar do toast neutro sem depender de temporização.
+ * Vira um cartão vermelho-escuro com ícone, em vez da pílula neutra — ainda
+ * discreta (tom escuro, não um vermelho puro) porque é uma notificação do
+ * sistema sobre a moldura, não decoração da tela.
+ */
+.toast.erro {
+  background: #4a1712;
+  border: 1px solid #7a2a20;
+  border-radius: 10px;
+  align-items: flex-start;
+  padding: 10px 10px 10px 12px;
+}
+
+.toast.erro::before {
+  content: '⚠';
+  flex: none;
+  line-height: 1.3;
+}
+
+.toast.erro span {
+  flex: 1;
+}
+
+/* Botão de ação ("Desfazer") dentro do toast: precisa ler bem sobre o fundo
+   escuro, então usa branco translúcido em vez das cores de --btn normais
+   (feitas para fundo claro). `.toast .toast-action` (duas classes) para
+   vencer `.toast.erro button` em especificidade sem depender da ordem. */
+.toast .toast-action {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-radius: 999px;
+  padding: 3px 10px;
+  min-height: 24px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+
+.toast .toast-action:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.toast .toast-action:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Botão "fechar aviso" do toast de erro: só ícone, sem classe própria. */
+.toast.erro button:not(.toast-action) {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: none;
+}
+
+.toast.erro button:not(.toast-action):hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
 }
 
 .empty {
@@ -1033,9 +1542,26 @@ svg .mark-hot {
   filter: brightness(1.06);
 }
 
+/*
+ * `outline` em elementos SVG tem suporte inconsistente entre navegadores, e
+ * a marca pode ser qualquer forma (barra, ponto, fatia) sobre fundo variável
+ * do tema escolhido pelo usuário — por isso o anel de foco aqui é desenhado
+ * como stroke, não outline: funciona em qualquer <rect>/<circle>/<path> e o
+ * halo branco garante contraste tanto sobre marcas escuras quanto claras.
+ * Preparado para quando marcas se tornarem focáveis via teclado (tabIndex).
+ */
+svg .mark-clickable:focus-visible {
+  outline: none;
+  stroke: var(--accent);
+  stroke-width: 2.5px;
+  paint-order: stroke;
+  filter: drop-shadow(0 0 2px #fff);
+}
+
 /* Guião vertical que acompanha o cursor em linhas, áreas e dispersão. */
 svg .crosshair {
-  stroke: var(--muted-soft);
+  /* Decorativo (guia de leitura, não texto): mantém o tom claro original. */
+  stroke: var(--muted-faint);
   stroke-width: 1;
   stroke-dasharray: 3 4;
   pointer-events: none;
@@ -1114,6 +1640,110 @@ svg .crosshair {
   background: rgba(255, 255, 255, 0.18);
 }
 
+/* ------------------------------------------------------------ ajuda (?) */
+
+/* Camada externa: fundo escurecido, centraliza o cartão do diálogo. */
+.help-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(13, 16, 20, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: presentation-fade 0.18s ease both;
+}
+
+/* Cartão real do diálogo — claro, como o resto da moldura da UI. */
+.help-panel-body {
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  width: min(480px, 100%);
+  max-height: min(600px, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.help-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.help-panel-header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.help-panel-header button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.help-panel-header button:hover {
+  background: var(--panel-alt);
+  color: var(--text);
+}
+
+.help-panel-content {
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.help-panel-content section h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted-soft);
+}
+
+.help-panel-content ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.help-panel-content li {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Tecla no estilo "keycap": pequena, com relevo sutil, para se distinguir do
+   texto ao redor sem recorrer a cor. */
+.help-panel-content kbd {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel-alt);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.5;
+}
+
 @media (max-width: 1080px) {
   .workspace {
     grid-template-columns: 340px 1fr;
@@ -1134,4 +1764,59 @@ svg .crosshair {
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-color: #fff;
+}
+
+/* --------------------------------------------------------------- impressão */
+
+/*
+ * Sem isto, imprimir a página hoje sai com a barra superior, o painel de
+ * controles inteiro e a barra de ferramentas do gráfico — nada disso faz
+ * sentido em papel. O objetivo é a folha virar só o gráfico: sem moldura de
+ * editor, sem sombra (sombra em tinta/PDF só desperdiça toner e não imprime
+ * bem), sem fundo cinza atrás, e sem risco de cortar o gráfico ao meio numa
+ * quebra de página.
+ */
+@media print {
+  .topbar,
+  .panel,
+  .stage-toolbar,
+  .lint,
+  .toast-region,
+  .help-panel,
+  .presentation-close {
+    display: none !important;
+  }
+
+  html,
+  body,
+  #root,
+  .app,
+  .workspace,
+  .stage {
+    height: auto;
+    background: #fff;
+  }
+
+  .app {
+    display: block;
+  }
+
+  .workspace {
+    display: block;
+  }
+
+  .stage {
+    overflow: visible;
+    padding: 0;
+  }
+
+  .canvas-shell {
+    box-shadow: none;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .stage-canvas {
+    max-width: 100%;
+  }
 }

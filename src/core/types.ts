@@ -407,6 +407,24 @@ export interface PlotArea {
   height: number
 }
 
+/**
+ * Um ponto de dado com sua posicao final na cena.
+ *
+ * Existe para o editor responder "que numero e esse?" sob o cursor sem precisar
+ * de um no de DOM por observacao. Num grafico de linha com 20 mil pontos, o
+ * caminho antigo — um circulo transparente por ponto, so para receber o hover —
+ * custava 60 mil elementos e 380ms de render. Aqui a mesma informacao e um
+ * array simples, que nao entra no SVG nem no arquivo exportado.
+ */
+export interface ScenePoint {
+  series: string
+  category: string
+  value: number
+  rowIndex: number
+  x: number
+  y: number
+}
+
 export interface Scene {
   width: number
   height: number
@@ -417,6 +435,8 @@ export interface Scene {
   series: SeriesInfo[]
   /** Rotulos de categoria, na ordem em que foram desenhados. */
   categories: string[]
+  /** Indice de pontos para tooltip e navegacao por teclado. Nao e desenhado. */
+  points: ScenePoint[]
 }
 
 /** Item de legenda emitido pelos renderizadores para a UI reaproveitar. */

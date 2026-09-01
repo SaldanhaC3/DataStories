@@ -189,33 +189,20 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
     const showPoints = spec.chart.options.showPoints && density > 14
     const singleton = defined.length === 1
 
-    // Alvos de toque invisíveis: sem eles, uma linha fina é difícil de hover e
-    // o tooltip não tem onde ler o valor do ponto. O handle "hit" faz a
-    // exportação em SVG/PNG descartá-los — são só para a interação do editor.
-    // Um alvo por ponto viraria dezenas de milhares de nós em tabelas grandes
-    // (recalculados a cada tecla); amostramos para no máximo um alvo a cada
-    // ~10px de painel, que é a resolução que um cursor consegue mirar.
-    if (!showPoints && !singleton) {
-      const maxTargets = Math.max(1, Math.floor(frame.plot.width / 10))
-      const step = Math.ceil(defined.length / maxTargets)
-      for (let k = 0; k < defined.length; k += step) {
-        const p = defined[k]
-        const { x, y } = frame.xy(p.cat, p.val)
-        nodes.push({
-          t: 'circle',
-          cx: x,
-          cy: y,
-          r: Math.max(11, width * 3),
-          fill: 'transparent',
-          handle: 'hit',
-          meta: {
-            series: s.name,
-            rowIndex: p.i,
-            category: model.categoryLabels[p.i],
-            value: p.value ?? 0,
-          },
-        })
-      }
+    // Linha e área desenham a série inteira como um caminho só, então não há
+    // geometria por observação para o cursor encontrar. Em vez de emitir um
+    // círculo transparente por ponto — que custava um nó de DOM por dado —
+    // registramos as posições no índice da cena, que não vira SVG.
+    for (const p of defined) {
+      const { x, y } = frame.xy(p.cat, p.val)
+      ctx.collectPoint({
+        series: s.name,
+        category: model.categoryLabels[p.i],
+        value: p.value ?? 0,
+        rowIndex: p.i,
+        x,
+        y,
+      })
     }
 
     if (showPoints || singleton) {

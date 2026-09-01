@@ -7,7 +7,7 @@
  * registrá-la — nada no editor precisa mudar.
  */
 
-import type { ChartSpec, ChartType, SceneNode, Theme } from '../types'
+import type { ChartSpec, ChartType, SceneNode, ScenePoint, Theme } from '../types'
 import type { ChartModel, SeriesData } from '../model'
 import type { CategoryScaleKind, Frame, Orientation } from '../frame'
 import type { LocaleId } from '../format'
@@ -18,6 +18,14 @@ export interface DrawContext {
   theme: Theme
   frame: Frame
   locale: LocaleId
+  /**
+   * Registra um ponto no indice de hover da cena. Renderizadores que ja emitem
+   * uma marca por observacao (barras, dispersao) nao precisam chamar: o indice
+   * e preenchido automaticamente a partir dos nos com `meta`. Quem desenha uma
+   * serie inteira como um unico caminho — linha e area — chama aqui, porque
+   * senao nao haveria geometria por ponto em lugar nenhum.
+   */
+  collectPoint: (point: ScenePoint) => void
 }
 
 export type ChartGroup = 'Núcleo editorial' | 'Comparação e ranking' | 'Distribuição e composição'
@@ -72,11 +80,31 @@ export function bandOrTime(model: ChartModel): CategoryScaleKind {
  * justamente no grafico mais usado.
  */
 export function markColor(ctx: DrawContext, series: SeriesData, index: number): string {
+  const label = ctx.model.categoryLabels[index]
   const highlighted = ctx.spec.highlight.categories
-  if (highlighted.length === 0) return series.color
-  return highlighted.includes(ctx.model.categoryLabels[index])
-    ? series.color
-    : ctx.theme.mutedSeries
+
+  // Apagada por destaque de categoria vence tudo: quem destacou uma barra quer
+  // as outras em cinza, mesmo que tenha escolhido cor para elas antes.
+  if (highlighted.length > 0 && !highlighted.includes(label)) {
+    return ctx.theme.mutedSeries
+  }
+
+  // Cor escolhida para UMA marca específica (série + categoria). É o que o
+  // popover de seleção no gráfico grava quando há várias séries e a pessoa
+  // quer pintar uma única barra/coluna sem tocar nas irmãs da mesma série.
+  const perMark = ctx.spec.color.overrides[`${series.name} :: ${label}`]
+  if (perMark) return perMark
+
+  // Cor escolhida para a categoria. Num gráfico de uma série só — barras com
+  // uma coluna de valores, o caso mais comum — "colorir" significa colorir uma
+  // barra, não a série inteira; sem isto, a escolha de cor por categoria seria
+  // gravada no documento e nunca desenhada.
+  if (ctx.model.series.length === 1) {
+    const override = ctx.spec.color.overrides[label]
+    if (override) return override
+  }
+
+  return series.color
 }
 
 /** Verdadeiro quando a marca esta apagada por qualquer um dos dois destaques. */

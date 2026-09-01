@@ -9,15 +9,19 @@
  */
 
 import type { ChartSpec, Dataset, Theme } from '../../core/types'
+import type { ChartModel, SeriesData } from '../../core/model'
 import { buildModel } from '../../core/model'
 import { getChartDefinition } from '../../core/render'
 import { newId } from '../../core/schema'
+import { abbreviate, formatNumber, type LocaleId } from '../../core/format'
+import { categorical } from '../../core/theme/palettes'
 import { useEditor } from '../../state/store'
 import {
   Chip,
   ColorInput,
   Field,
   Group,
+  NumberInput,
   Segmented,
   Select,
   TextArea,
@@ -27,6 +31,97 @@ import {
 
 const TITLE_ADVICE =
   'Diga a conclusão, não o assunto: "Vendas caem 23% desde julho" em vez de "Vendas por mês".'
+
+/**
+ * Série "ativa" para efeito de sugestão/semeadura: a primeira destacada, ou a
+ * primeira do modelo quando nada está destacado. Evita sugerir número de uma
+ * série que o próprio autor apagou visualmente.
+ */
+function activeSeries(model: ChartModel, spec: ChartSpec): SeriesData | undefined {
+  if (spec.highlight.series.length > 0) {
+    const found = model.series.find((s) => spec.highlight.series.includes(s.name))
+    if (found) return found
+  }
+  return model.series[0]
+}
+
+function medianOf(values: Array<number | null>): number | null {
+  const nums = values.filter((v): v is number => v !== null && Number.isFinite(v))
+  if (nums.length === 0) return null
+  const sorted = [...nums].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/** Índice do maior valor de uma série; -1 quando não há nenhum valor. */
+function indexOfMax(values: Array<number | null>): number {
+  let best = -1
+  let bestValue = -Infinity
+  values.forEach((v, i) => {
+    if (v !== null && Number.isFinite(v) && v > bestValue) {
+      bestValue = v
+      best = i
+    }
+  })
+  return best
+}
+
+/**
+ * Três frases candidatas a título, calculadas do próprio modelo. Cada uma só
+ * aparece quando os dados realmente a sustentam — nada de inventar variação
+ * onde falta categoria ou série.
+ */
+function titleSuggestions(model: ChartModel, spec: ChartSpec, locale: LocaleId): string[] {
+  const suggestions: string[] = []
+  const series = activeSeries(model, spec)
+  const labels = model.categoryLabels
+
+  if (series && labels.length >= 2) {
+    const first = series.values[0]
+    const last = series.values[series.values.length - 1]
+    if (first !== null && last !== null && first !== 0) {
+      const change = (last - first) / Math.abs(first)
+      const verb = change >= 0 ? 'cresce' : 'cai'
+      const pct = formatNumber(Math.abs(change), '.0%', locale)
+      suggestions.push(`${series.name} ${verb} ${pct} entre ${labels[0]} e ${labels[labels.length - 1]}`)
+    }
+  }
+
+  if (model.series.length > 1) {
+    let best: SeriesData | null = null
+    let bestSum = -Infinity
+    for (const s of model.series) {
+      const sum = s.values.reduce((acc: number, v) => acc + (v ?? 0), 0)
+      if (sum > bestSum) {
+        bestSum = sum
+        best = s
+      }
+    }
+    if (best && Number.isFinite(bestSum)) {
+      suggestions.push(`${best.name} lidera com ${abbreviate(bestSum, locale)}`)
+    }
+  } else if (series) {
+    const bestIndex = indexOfMax(series.values)
+    if (bestIndex >= 0) {
+      suggestions.push(`${labels[bestIndex]} lidera com ${abbreviate(series.values[bestIndex] as number, locale)}`)
+    }
+  }
+
+  if (series) {
+    const maxIndex = indexOfMax(series.values)
+    const minIndex = indexOfMax(series.values.map((v) => (v === null ? null : -v)))
+    if (maxIndex >= 0 && minIndex >= 0 && maxIndex !== minIndex) {
+      const diff = (series.values[maxIndex] as number) - (series.values[minIndex] as number)
+      if (diff !== 0) {
+        suggestions.push(
+          `Maior diferença entre ${labels[maxIndex]} e ${labels[minIndex]}: ${abbreviate(diff, locale)}`,
+        )
+      }
+    }
+  }
+
+  return suggestions.slice(0, 3)
+}
 
 export function AnnotateStep({
   spec,
@@ -65,6 +160,29 @@ export function AnnotateStep({
     ? model.categoryLabels.map((label, i) => ({ label, color: undefined, key: label, i }))
     : model.series.map((s, i) => ({ label: s.name, color: s.color, key: s.name, i }))
 
+  /**
+   * `markColor` (core/render/context.ts) só lê `color.overrides` por rótulo de
+   * categoria quando há uma série só, e `partition.ts` sempre leu assim para
+   * rosca/waffle/treemap. O `slope` cai em `byCategory` acima (o destaque é por
+   * categoria), mas seu renderizador nunca leu override por categoria — por
+   * isso este flag é mais estrito que aquele, para não oferecer um controle
+   * que não pinta nada.
+   */
+  const colorByCategory = definition.bare || model.series.length === 1
+  const categoryPalette = definition.bare
+    ? categorical(theme.palette, model.categoryLabels.length)
+    : null
+  const colorEntries = colorByCategory
+    ? model.categoryLabels.map((label, i) => ({
+        key: label,
+        label,
+        fallback: categoryPalette ? categoryPalette[i] ?? theme.accent : model.series[0]?.color ?? theme.accent,
+      }))
+    : model.series.map((s) => ({ key: s.name, label: s.name, fallback: s.color }))
+
+  const locale = spec.data.locale
+  const suggestions = titleSuggestions(model, spec, locale)
+
   return (
     <>
       <Group title="Texto">
@@ -72,6 +190,22 @@ export function AnnotateStep({
           label={`Título  ·  ${spec.text.title.length} caracteres`}
           hint={TITLE_ADVICE}
         >
+          {suggestions.length > 0 && (
+            <div className="chip-row">
+              {suggestions.map((suggestion) => (
+                <Chip
+                  key={suggestion}
+                  label={suggestion}
+                  active={spec.text.title === suggestion}
+                  onClick={() =>
+                    update((draft) => {
+                      draft.text.title = suggestion
+                    })
+                  }
+                />
+              ))}
+            </div>
+          )}
           <TextArea
             value={spec.text.title}
             rows={2}
@@ -188,23 +322,25 @@ export function AnnotateStep({
         </Field>
       </Group>
 
-      <Group title="Cores por série">
-        {model.series.map((series) => (
-          <Field key={series.name} label={series.name}>
+      <Group title={colorByCategory ? 'Cores por categoria' : 'Cores por série'}>
+        {colorEntries.map((entry) => (
+          <Field key={entry.key} label={entry.label}>
             <ColorInput
-              value={spec.color.overrides[series.name] ?? null}
-              fallback={series.color}
+              value={spec.color.overrides[entry.key] ?? null}
+              fallback={entry.fallback}
               onChange={(value) =>
                 update((draft) => {
-                  if (value === null) delete draft.color.overrides[series.name]
-                  else draft.color.overrides[series.name] = value
+                  if (value === null) delete draft.color.overrides[entry.key]
+                  else draft.color.overrides[entry.key] = value
                 })
               }
             />
           </Field>
         ))}
-        {model.series.length === 0 && (
-          <span className="inline-note">Nenhuma série ativa no momento.</span>
+        {colorEntries.length === 0 && (
+          <span className="inline-note">
+            {colorByCategory ? 'Nenhuma categoria ativa no momento.' : 'Nenhuma série ativa no momento.'}
+          </span>
         )}
       </Group>
 
@@ -236,51 +372,65 @@ export function AnnotateStep({
           <button
             type="button"
             className="btn tiny"
-            onClick={() =>
+            onClick={() => {
+              // Nasce na mediana da primeira série ativa, arredondada e escrita no
+              // locale do spec — é o mesmo locale que o parser de anotação usa
+              // para reler o valor, senão "1234.5" vira lixo num spec pt-BR.
+              const series = activeSeries(model, spec)
+              const median = series ? medianOf(series.values) : null
+              const value = median === null ? '' : formatNumber(Math.round(median), ',', locale)
               addAnnotation({
                 id: newId(),
                 kind: 'line',
                 axis: 'y',
-                value: '',
-                label: 'meta',
+                value,
+                label: 'média',
                 dash: true,
                 color: null,
               })
-            }
+            }}
           >
             + linha
           </button>
           <button
             type="button"
             className="btn tiny"
-            onClick={() =>
+            onClick={() => {
+              // Das duas últimas categorias: sempre existem quando há dado
+              // suficiente para o gráfico fazer sentido, e é o recorte mais comum
+              // ("o que aconteceu no fim do período").
+              const labels = model.categoryLabels
+              const from = labels.length >= 2 ? labels[labels.length - 2] : ''
+              const to = labels.length >= 1 ? labels[labels.length - 1] : ''
               addAnnotation({
                 id: newId(),
                 kind: 'range',
                 axis: 'x',
-                from: '',
-                to: '',
+                from,
+                to,
                 label: 'período',
                 color: null,
               })
-            }
+            }}
           >
             + faixa
           </button>
           <button
             type="button"
             className="btn tiny"
-            onClick={() =>
+            onClick={() => {
+              const series = activeSeries(model, spec)
+              const bestIndex = series ? indexOfMax(series.values) : -1
               addAnnotation({
                 id: newId(),
                 kind: 'point',
-                series: model.series[0]?.name ?? '',
-                rowIndex: Math.max(0, model.categories.length - 1),
+                series: series?.name ?? '',
+                rowIndex: bestIndex >= 0 ? bestIndex : Math.max(0, model.categories.length - 1),
                 label: '',
                 showValue: true,
                 color: null,
               })
-            }
+            }}
           >
             + ponto
           </button>
@@ -363,6 +513,32 @@ export function AnnotateStep({
                     })
                   }
                 />
+                {annotation.connector.enabled && (
+                  <Toggle
+                    checked={annotation.connector.arrow}
+                    label="Ponta de seta"
+                    onChange={(value) =>
+                      update((draft) => {
+                        const a = draft.annotations.find((x) => x.id === annotation.id)
+                        if (a?.kind === 'text') a.connector.arrow = value
+                      })
+                    }
+                  />
+                )}
+                <Field label="Tamanho do texto">
+                  <NumberInput
+                    value={annotation.size}
+                    min={8}
+                    max={40}
+                    step={1}
+                    onChange={(value) =>
+                      update((draft) => {
+                        const a = draft.annotations.find((x) => x.id === annotation.id)
+                        if (a?.kind === 'text') a.size = value ?? 13
+                      })
+                    }
+                  />
+                </Field>
                 <Toggle
                   checked={annotation.background}
                   label="Fundo atrás do texto"

@@ -1,0 +1,922 @@
+[
+ {
+  "id": "primeira-abertura-beco-sem-saida",
+  "title": "Primeira abertura cai num beco sem saída",
+  "dimension": "ux",
+  "problem": "O spec padrão não é vazio: `src/core/schema.ts:168` faz `data: dataSource.default(emptySource())` e `emptySource(3,5)` (`src/core/dataset/parse.ts:180`) cria 3 colunas (\"Categoria\", \"Série 1\", \"Série 2\") e 5 linhas de strings vazias. Isso faz `dataset.rows.length === 5` na primeira abertura, então a regra de lint 'sem-dados' (`src/advisor/lint.ts:68`), que é a única que diz \"cole uma tabela, suba um CSV\", NUNCA dispara para quem acabou de abrir o app. Dispara 'sem-serie' (`src/advisor/lint.ts:77`), que manda \"conferir os tipos das colunas na etapa Dados\". Em paralelo, o overlay do palco diz \"Nenhuma coluna de valores no gráfico / Escolha quais colunas numéricas devem ser desenhadas\" e o botão primário é \"Escolher colunas de valores\" (`src/ui/App.tsx:236-252`). Clicando nele o usuário vai para a etapa 2, onde `numericColumns` está vazio e a única saída oferecida é marcar \"Categoria → número\" sobre colunas sem nenhum dado (`src/ui/steps/ChartStep.tsx:137-160`). Ou seja: três mensagens diferentes mandam corrigir tipos de colunas que não têm conteúdo, e nenhuma delas diz a única coisa que resolve — carregar dados.",
+  "proposal": "Separar o estado \"ainda não há dados\" do estado \"há dados mas nenhuma coluna de valores\". Calcular em App.tsx um `isPristine = spec.data.rows.every(r => r.every(c => !c.trim()))` e, quando verdadeiro, trocar o overlay por um convite de entrada: três ações grandes — \"Colar tabela\", \"Abrir CSV\", \"Ver um exemplo\" — que levam à etapa Dados com o foco já no textarea, ou carregam um exemplo direto. Na mesma condição, o painel da etapa Dados deve mostrar só o grupo \"Carregar\" e \"Começar de um exemplo\", escondendo \"Interpretação\", \"Ordenar e limitar\" e a grade vazia, que hoje são quatro grupos de controles que não fazem nada. E em lint.ts, trocar a condição de 'sem-dados' de `dataset.rows.length === 0` para \"nenhuma célula preenchida\", para o erro certo aparecer.",
+  "files": [
+   "src/ui/App.tsx",
+   "src/ui/steps/DataStep.tsx",
+   "src/advisor/lint.ts",
+   "src/core/schema.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "App.tsx:238 `<p>Escolha quais colunas numéricas devem ser desenhadas.</p>` — mostrado sobre uma tabela de 5 linhas vazias criada por emptySource(3,5) em parse.ts:180; lint.ts:68 `if (dataset.rows.length === 0)` nunca é verdadeiro na primeira abertura."
+ },
+ {
+  "id": "carregar-exemplo-apaga-tudo",
+  "title": "Carregar exemplo ou projeto apaga sem volta",
+  "dimension": "robustez",
+  "problem": "Clicar num chip de exemplo executa `replaceSpec(example.build(), { resetHistory: true })` (`src/ui/steps/DataStep.tsx:136-140`). O `resetHistory` zera `past` e `future` (`src/state/store.ts:118-127`) e o `persist(next)` na linha 120 sobrescreve o autosave no mesmo instante. Resultado: quem já colou a própria planilha e clica num exemplo por curiosidade perde tudo — Ctrl+Z não traz de volta, o autosave já foi por cima, e não houve nenhuma confirmação. O mesmo vale para \"Abrir projeto salvo\" (`src/ui/steps/PublishStep.tsx:170-188` → `loadFromJson` → `store.ts:134`, também com `resetHistory: true`). O `reset()` de \"Começar do zero\" (`store.ts:177-182`) pelo menos pede `confirm()`, mas também zera as duas pilhas, então nem ali o desfazer funciona. Três caminhos destrutivos, e o desfazer — que existe e é bom — é justamente desligado nos três.",
+  "proposal": "Parar de zerar o histórico nessas três ações: `replaceSpec` deve empurrar o spec anterior para `past` como qualquer outra edição (o `resetHistory` só faz sentido no boot). Com isso Ctrl+Z passa a reverter \"carreguei o exemplo errado\". Complementar com um toast acionável — hoje o toast é só texto (`App.tsx:305`); dar a ele um campo opcional de ação e mostrar \"Exemplo carregado · desfazer\". Para o `reset()`, trocar o `confirm()` nativo por: executar, mostrar o toast com \"desfazer\" e manter uma cópia do spec anterior em `past`.",
+  "files": [
+   "src/state/store.ts",
+   "src/ui/steps/DataStep.tsx",
+   "src/ui/steps/PublishStep.tsx",
+   "src/ui/App.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "DataStep.tsx:138 `replaceSpec(example.build(), { resetHistory: true })` combinado com store.ts:120 `persist(next)` e store.ts:123 `past: options.resetHistory ? [] : ...`"
+ },
+ {
+  "id": "preview-largura-nao-testa-nada",
+  "title": "Presets de largura não testam largura nenhuma",
+  "dimension": "funcionalidade",
+  "problem": "Os presets \"Artigo 760\" e \"Mobile 380\" (`src/ui/App.tsx:33-37`) só aplicam `maxWidth` no `div.stage-canvas` (`src/ui/App.tsx:228-234`). O SVG tem `viewBox` fixo em `scene.width × scene.height` e `width: '100%'` (`src/ui/Canvas.tsx:387-390`), então tudo — títulos, rótulos de categoria, marcas de valor, anotações — encolhe proporcionalmente junto. O que o usuário vê em \"Mobile 380\" é o mesmo gráfico com zoom out, com o texto ilegível mas nunca colidindo. Num render real a 380px, a cena seria recalculada: menos ticks, rótulos rotacionados ou omitidos, legenda quebrada em duas linhas, título com mais linhas. O preset promete o teste responsivo do Datawrapper e entrega uma lupa — o que é pior que não ter, porque dá confiança falsa antes de publicar.",
+  "proposal": "Fazer o preset alterar de fato a largura da cena. Duas opções: (a) o preset escreve `spec.layout.width` (com `silent: true` ou coalesceKey próprio para não poluir o histórico) e restaura o valor ao voltar para \"Responsivo\", ou (b) manter o spec intacto e renderizar uma segunda cena com `renderChart({ spec: {...spec, layout:{...spec.layout, width: preset.maxWidth}}, dataset, theme })` só para o preview, exibindo-a em tamanho natural dentro do palco. A opção (b) é mais honesta porque não mexe no documento. Em qualquer uma, rotular o chip com a largura efetiva de render, não a largura da caixa.",
+  "files": [
+   "src/ui/App.tsx",
+   "src/ui/Canvas.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "App.tsx:231-233 `maxWidth: PREVIEW_WIDTHS.find(...)?.maxWidth ?? 1200` é a única coisa que o preset faz; Canvas.tsx:390 `style={{ width: '100%', height: 'auto' }}` sobre um viewBox fixo."
+ },
+ {
+  "id": "publicar-em-branco-no-erro",
+  "title": "Etapa Publicar fica em branco quando a cena falha",
+  "dimension": "ux",
+  "problem": "`src/ui/App.tsx:208-210`: `{step === 'publicar' && rendered.scene && <PublishStep .../>}`. Quando o renderizador lança (o try/catch de `App.tsx:67-76` deixa `scene: null`), a etapa 4 renderiza literalmente nada — painel vazio, sem título, sem explicação. E como `nextStep` é `undefined` na última etapa (`App.tsx:109`), nem o botão \"Continuar\" aparece para dar uma saída. No palco, o único sinal é a mensagem crua do erro dentro de um `div.empty` sem nenhuma ação (`App.tsx:255-259`). O usuário que chegou até a publicação vê meia tela vazia e nenhuma pista de como voltar ao estado que funcionava — mesmo tendo o Desfazer disponível na topbar, nada o aponta.",
+  "proposal": "Quando `rendered.scene` for null, renderizar na etapa 4 um bloco de erro no lugar do PublishStep: título (\"Não dá para exportar enquanto o gráfico não desenha\"), a mensagem de `rendered.error`, e dois botões — \"Desfazer a última mudança\" (chamando `undo()`, habilitado se `canUndo`) e \"Voltar para Gráfico\". Aplicar o mesmo bloco no `div.empty` do palco em vez do texto solto. Vale também tratar o caso em que os outros três painéis renderizam sobre uma cena quebrada, hoje sem nenhum aviso no painel.",
+  "files": [
+   "src/ui/App.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "App.tsx:208 `{step === 'publicar' && rendered.scene && (<PublishStep .../>)}` — sem ramo `else`, e App.tsx:256-258 `<div className=\"empty\" style={{maxWidth:460}}>{rendered.error}</div>`."
+ },
+ {
+  "id": "upload-sem-erro-sem-loading",
+  "title": "Upload de arquivo sem validação, erro ou carregando",
+  "dimension": "robustez",
+  "problem": "`src/ui/steps/DataStep.tsx:57-64`: o `FileReader` define `onload` e mais nada — sem `onerror`, sem checagem de tamanho, sem checagem de tipo. O `<input>` filtra por `accept=\".csv,.tsv,.txt\"` (linha 102), mas a dropzone aceita qualquer arquivo solto (linhas 118-123): arrastar um .xlsx ou um .pdf passa o binário direto para `parseDelimited`, que sempre devolve alguma matriz (`src/core/dataset/parse.ts:109-148`) — a tabela do usuário é substituída por lixo, com toast dizendo alegremente \"N linhas · M colunas · separador ...\". Um CSV de 40MB congela a aba sem nenhum indicador. E se a leitura falhar, o `onload` nunca roda e literalmente nada acontece na tela: o usuário clica, arrasta, e conclui que o botão está quebrado.",
+  "proposal": "Em `onFile`: (1) validar extensão/`type` e recusar com toast de erro explicando o que é aceito, sugerindo \"exporte como CSV\" para planilhas; (2) checar `file.size` e avisar acima de ~10MB antes de ler; (3) adicionar `reader.onerror` com toast de erro; (4) um estado `reading` que troca a dropzone por \"lendo arquivo…\" e desabilita os botões. E em `ingest` (linhas 34-55), antes de substituir: se a matriz parseada tiver 1 coluna só ou mais de 50% de células vazias, mostrar as 5 primeiras linhas detectadas com \"não parece uma tabela — usar mesmo assim?\" em vez de trocar os dados na cara.",
+  "files": [
+   "src/ui/steps/DataStep.tsx",
+   "src/core/dataset/parse.ts"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "DataStep.tsx:58-62 `const reader = new FileReader(); reader.onload = () => ingest(String(reader.result ?? '')); reader.readAsText(file,'utf-8')` — nenhum onerror, nenhum guard de tipo/tamanho, e a dropzone (linha 121) pega `e.dataTransfer.files?.[0]` sem filtro."
+ },
+ {
+  "id": "anotacao-nasce-invisivel",
+  "title": "Anotação nova nasce invisível no gráfico",
+  "dimension": "funcionalidade",
+  "problem": "Os botões \"+ linha\" e \"+ faixa\" criam anotações com os campos de posição vazios: `value: ''` (`src/ui/steps/AnnotateStep.tsx:243-249`) e `from: ''` / `to: ''` (linhas 258-265). O renderizador descarta exatamente esses casos — `src/core/annotate/annotations.ts:39` `if (trimmed === '') return null` e a linha 162 `if (pixel === null) return []`. O \"+ ponto\" usa `series: model.series[0]?.name ?? ''` (linha 277) e a linha 262 do renderizador devolve `[]` quando a série não existe. Ou seja: o usuário clica em \"+ linha\", olha o preview — que é o ponto central da ferramenta, sempre visível — e não acontece nada. Não há mensagem dizendo que falta preencher um valor; o card aparece no painel, longe do olhar de quem estava olhando o gráfico, e nada indica qual campo é obrigatório.",
+  "proposal": "Nascer com valores plausíveis, calculados do `model` que a etapa já tem em mãos (`AnnotateStep.tsx:47`): linha de valor → mediana (ou média) da primeira série ativa, arredondada, com rótulo \"média\"; faixa no eixo x → das duas últimas categorias; ponto → índice do maior valor da primeira série. Assim toda anotação aparece no gráfico no instante do clique e o usuário edita a partir de algo visível, em vez de adivinhar. Complementar: marcar visualmente no card qual campo está vazio e impedindo o desenho, e rolar o painel até o card recém-criado.",
+  "files": [
+   "src/ui/steps/AnnotateStep.tsx",
+   "src/core/annotate/annotations.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "AnnotateStep.tsx:246 `value: ''` e annotations.ts:39 `if (trimmed === '') return null` — a anotação existe no spec, não existe na cena."
+ },
+ {
+  "id": "autosave-a-cada-tecla",
+  "title": "Autosave grava a cada tecla e falha em silêncio",
+  "dimension": "robustez",
+  "problem": "`src/state/store.ts:114`: `persist(draft)` roda dentro de todo `update`, sem debounce. `persist` faz `JSON.stringify(spec)` do documento inteiro — dados inclusive — e uma escrita síncrona em localStorage (`store.ts:77-85`). Cada tecla digitada numa célula da grade dispara um `update` (`src/ui/DataGrid.tsx:57-65`), assim como cada tecla no título, no subtítulo, no texto da anotação, e cada pixel de arrasto de anotação (`src/ui/Canvas.tsx:316-325`). O `coalesceKey` funde só o histórico, não a persistência. Numa planilha de alguns milhares de linhas isso é serializar megabytes por caractere, na thread principal — a digitação trava. Pior: quando a cota estoura, o `catch {}` de `store.ts:82-84` engole o erro e o usuário continua achando que o rascunho está salvo até fechar a aba e perder tudo.",
+  "proposal": "Trocar o `persist` imediato por um debounce de ~500ms (um único timer no módulo), com flush em `beforeunload` e antes de qualquer `replaceSpec`/`reset`. No `catch`, em vez de silêncio, setar um flag de estado (`autosaveFailed`) e mostrar um aviso persistente na topbar — não um toast de 3,2s — dizendo que o rascunho parou de ser salvo e sugerindo \"Salvar arquivo .datastories.json\". Já que existe o indicador, aproveitar para mostrar \"salvo há X\" na topbar: hoje não há nenhum sinal de que o autosave existe, ele só é mencionado num `inline-note` no fim da etapa 4 (`src/ui/steps/PublishStep.tsx:202-205`).",
+  "files": [
+   "src/state/store.ts",
+   "src/ui/App.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "store.ts:114 `persist(draft)` sem debounce, chamado por DataGrid.tsx:58 a cada tecla; store.ts:81-84 `catch { }` com comentário \"perder o autosave é melhor que derrubar o editor\" — mas sem contar isso a ninguém."
+ },
+ {
+  "id": "toast-mudo-e-indistinto",
+  "title": "Toast não distingue erro e não é anunciado",
+  "dimension": "acessibilidade",
+  "problem": "O toast é o único canal de feedback do app — confirma ingestão de dados (`src/ui/steps/DataStep.tsx:49-52`), exportações (`src/ui/steps/PublishStep.tsx:31`), carga de projeto — e também é onde os erros aparecem: \"Falha ao gerar o PNG\" (`PublishStep.tsx:33`), o erro de parse do JSON (`PublishStep.tsx:183`), \"Copie o código abaixo manualmente\" (`PublishStep.tsx:143`). Mas ele é um `<div className=\"toast\">` sem `role` nem `aria-live` (`src/ui/App.tsx:305`), então leitor de tela não anuncia nada: para quem navega por teclado, exportar um PNG é silêncio absoluto, com sucesso ou com falha. E o CSS tem uma variante só — pílula escura, `background: #16191d` (`src/ui/styles.css:932-945`) — então uma falha de exportação é visualmente idêntica a um sucesso e some sozinha em 3,2s (`App.tsx:111-115`).",
+  "proposal": "Dar ao toast um tipo (`'ok' | 'erro'`) no store, `role=\"status\"` com `aria-live=\"polite\"` para sucesso e `role=\"alert\"` com `aria-live=\"assertive\"` para erro, variante visual vermelha com ícone, e sem auto-dismiss quando for erro (fechar no clique ou no Esc). Aproveitar o mesmo campo para a ação de desfazer citada em outro achado. Vale também `aria-live` no contador do palco e um `aria-label` no SVG que inclua o subtítulo, não só o título (`Canvas.tsx:392`).",
+  "files": [
+   "src/ui/App.tsx",
+   "src/state/store.ts",
+   "src/ui/styles.css"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "App.tsx:305 `{toast && <div className=\"toast\">{toast}</div>}` — sem role/aria-live; styles.css:932 `.toast` tem uma cor só para sucesso e erro."
+ },
+ {
+  "id": "selecao-de-anotacao-invisivel",
+  "title": "Anotação selecionada não aparece no gráfico",
+  "dimension": "ux",
+  "problem": "`selectedAnnotation` existe no store e governa o Delete global (`src/ui/App.tsx:149-152`) e a classe `.selected` do card no painel (`src/ui/steps/AnnotateStep.tsx:299`), mas o Canvas nunca lê esse estado — a busca por `selectedAnnotation` no `src/` só encontra store.ts, App.tsx e AnnotateStep.tsx; o Canvas importa apenas `selectAnnotation` (`src/ui/Canvas.tsx:196`). Consequências concretas: (1) depois de clicar numa anotação no gráfico, nada no gráfico indica que ela está selecionada — o único sinal está no painel, que pode estar rolado para outra posição; (2) apertar Delete remove uma anotação sem confirmação, sem toast e sem que o usuário saiba qual estava selecionada; (3) `removeAnnotation` (`src/state/store.ts:166-173`) também não avisa nada. A remoção é desfazível por Ctrl+Z, mas nada na tela conta isso.",
+  "proposal": "Passar `selectedAnnotation` para o Canvas e desenhar um contorno tracejado (ou alças nos cantos) em volta do nó cujo `data-handle` é `annotation:<id>` — o handle já existe na cena. Rolar o card correspondente para a vista quando a seleção mudar por clique no gráfico. E fazer `removeAnnotation` emitir um toast \"anotação removida · desfazer\" (com a ação do achado do toast), que é o que transforma o Delete de armadilha em atalho.",
+  "files": [
+   "src/ui/Canvas.tsx",
+   "src/ui/App.tsx",
+   "src/state/store.ts",
+   "src/ui/steps/AnnotateStep.tsx"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "Canvas.tsx:196 lê só `selectAnnotation`; nenhuma ocorrência de `selectedAnnotation` em Canvas.tsx. App.tsx:150-151 `event.preventDefault(); removeAnnotation(selectedAnnotation)` sem qualquer feedback."
+ },
+ {
+  "id": "gestos-e-atalhos-indescobriveis",
+  "title": "Gestos e atalhos que ninguém vai descobrir",
+  "dimension": "ux",
+  "problem": "O app tem uma camada inteira de interação direta que não é anunciada em lugar nenhum: Ctrl+1..4 troca de etapa, Esc e Delete (`src/ui/App.tsx:117-164`); clicar numa marca destaca a série/categoria (`src/ui/Canvas.tsx:359-369`); clicar no título ou na fonte dentro do gráfico pula para a etapa Anotar (`Canvas.tsx:348-352`); arrastar o texto da anotação reposiciona (`Canvas.tsx:215-247`); e, o mais perigoso, duplo clique no número da linha exclui a linha, com o único aviso sendo o `title` do `<td>` (`src/ui/DataGrid.tsx:247-253`) — enquanto excluir uma coluna, ao lado, pede `window.confirm` (linha 207). Os únicos rastros na interface são `title=\"Ctrl+Z\"` em dois botões da topbar e uma `inline-note` solta em `AnnotateStep.tsx:337-339`. Quem abre o app pela primeira vez vai fazer tudo no painel, mais devagar, sem nunca saber que a metade rápida existe — e um dia vai apagar uma linha sem querer.",
+  "proposal": "Um botão \"?\" na topbar (`App.tsx:168-182`) abrindo um painel com duas listas curtas: atalhos de teclado e gestos no gráfico (\"clique numa barra para destacar\", \"arraste o texto da anotação\", \"clique no título para editá-lo\"). Junto: dar affordance visual a esses gestos — cursor `pointer` e um contorno sutil ao passar sobre título/fonte no SVG, e trocar o duplo clique de exclusão de linha por um botão × que aparece no hover da linha, com toast de desfazer, uniformizando com a exclusão de coluna (que por sua vez pode largar o `confirm()` nativo em favor do mesmo desfazer).",
+  "files": [
+   "src/ui/App.tsx",
+   "src/ui/DataGrid.tsx",
+   "src/ui/Canvas.tsx",
+   "src/ui/styles.css"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "DataGrid.tsx:249-250 `onDoubleClick={() => removeRow(rowIndex)} title=\"Clique duas vezes para remover a linha\"` — a única documentação do gesto é um tooltip; nenhum arquivo da UI lista os atalhos de App.tsx:117-164."
+ },
+ {
+  "id": "conselheiro-chega-tarde",
+  "title": "Conselheiro de gráfico chega tarde e não se aplica",
+  "dimension": "funcionalidade",
+  "problem": "`recommend(dataset)` só é chamado dentro do painel da etapa 2 (`src/ui/steps/ChartStep.tsx:22`). No momento em que os dados chegam — `ingest` em `src/ui/steps/DataStep.tsx:34-55` — o app infere x e y, limpa destaque e ordenação, mas mantém `chart.type` como estava, que por padrão é `'bar'` (`src/core/schema.ts:148`). Quem cola uma série temporal de 12 meses vê barras, e a recomendação \"Muitos pontos no tempo: a linha mostra a trajetória sem virar floresta de barras\" (`src/advisor/recommend.ts:82`) só existe se ele navegar até a etapa 2. O toast do ingest (linhas 49-52) tem espaço para dizer isso e fala só de separador e contagem. Além disso, os cartões de sugestão (`ChartStep.tsx:64-75`) não indicam qual tipo está selecionado agora — não dá para saber se você já está no recomendado ou se o cartão do topo é uma mudança.",
+  "proposal": "Chamar `recommend` dentro do `ingest` e aplicar a primeira recomendação com score alto (>= 0.85) ao `chart.type` no mesmo `update`, contando no toast: \"12 meses detectados · gráfico de Linha aplicado\". Se o score for baixo, não aplicar e apenas sugerir. Em ChartStep, marcar com `aria-pressed`/estilo o cartão cujo `item.type === spec.chart.type` e rotulá-lo \"tipo atual\", e ocultar recomendações que apenas repetem o que já está escolhido.",
+  "files": [
+   "src/ui/steps/DataStep.tsx",
+   "src/ui/steps/ChartStep.tsx",
+   "src/advisor/recommend.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "DataStep.tsx:41-48 — o `update` do ingest mexe em `data`, `encoding`, `highlight` e `transform`, e nunca em `chart.type`; `recommend` sequer é importado no arquivo."
+ },
+ {
+  "id": "titulo-cobrado-sem-ajuda",
+  "title": "Título é cobrado mas nunca sugerido",
+  "dimension": "funcionalidade",
+  "problem": "A tese editorial do app é o título que conclui: o linter cobra em duas regras ('sem-titulo' e 'titulo-rotulo', `src/advisor/lint.ts:89-107`), a etapa 3 repete o conselho por escrito em `TITLE_ADVICE` (`src/ui/steps/AnnotateStep.tsx:28-29`) e os quatro exemplos exibem títulos exemplares (\"Assinaturas dobram no ano enquanto o avulso encolhe 40%\", `src/examples/samples.ts:88`). Mas o app não escreve nenhum candidato — o campo é um `TextArea` em branco com placeholder (`AnnotateStep.tsx:75-87`). Isso é exatamente o trabalho que a ferramenta poderia fazer sozinha: ela tem o modelo em mãos na mesma função (`AnnotateStep.tsx:47`), sabe a primeira e a última categoria, o valor máximo, a série líder e a variação percentual — tudo o que o próprio linter procura no texto (um número ou um verbo conjugado). O usuário fica com a cobrança e sem a ferramenta.",
+  "proposal": "Calcular 2 ou 3 frases candidatas a partir do `model` e mostrá-las como chips clicáveis acima do campo Título, que preenchem o campo ao clique (deixando o usuário editar depois): (a) variação da série destacada entre a primeira e a última categoria — \"Assinaturas cresce 115% entre 2024-01 e 2024-12\"; (b) líder do ranking e distância para o último — \"Sudeste lidera com 87,4%, 24 pontos acima do Norte\"; (c) participação da maior fatia em gráficos de composição. Cada candidato deve passar pelo próprio `titleLooksLikeLabel` de lint.ts antes de ser oferecido, para a ferramenta não sugerir o que ela mesma reprova. O mesmo padrão serve para o subtítulo (unidade + recorte, que já estão em `spec.axes.y.unit` e nas colunas).",
+  "files": [
+   "src/ui/steps/AnnotateStep.tsx",
+   "src/advisor/lint.ts",
+   "src/core/model.ts"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "AnnotateStep.tsx:28-29 `const TITLE_ADVICE = 'Diga a conclusão, não o assunto...'` — o app sabe dizer como se faz e tem `buildModel` na linha 47, mas nunca gera a frase."
+ },
+ {
+  "id": "rotulos-de-campo-sem-associacao",
+  "title": "Rótulos dos campos não se ligam aos controles",
+  "dimension": "acessibilidade",
+  "problem": "O componente `Field` (src/ui/controls/index.tsx:17-25) desenha `{label && <label>{label}</label>}` como irmão do controle, sem `htmlFor` e sem envolvê-lo. Como todos os controles das quatro etapas passam por `Field`, praticamente nenhum input/select/textarea do editor tem nome acessível: \"Largura (px)\", \"Mínimo\", \"Máximo\", \"Unidade\", \"Ordenar por\", \"Título do eixo de valores\", \"Fonte\", \"Crédito\" viram apenas \"campo de edição\" no leitor de tela. Clicar no rótulo também não foca o campo. O `hint` (linha 22), que carrega a orientação editorial do produto (\"Ponto separa milhar…\", \"Sem isso o leitor não tem como verificar nada\"), fica igualmente órfão.",
+  "proposal": "Gerar um id em `Field` com `useId()` e cloná-lo para o filho: `<label htmlFor={id}>` + `id={id}` e `aria-describedby={hintId}` no controle. Como os controles são todos internos (`TextInput`, `TextArea`, `NumberInput`, `Select`, `Segmented`, `Toggle`, `ColorInput`), o caminho mais simples é aceitar `id`/`describedBy` opcionais em cada um e o `Field` passá-los via contexto React, evitando `cloneElement`. Para `Segmented` e `ColorInput`, que não são um único controle, usar `role=\"group\"` com `aria-labelledby={labelId}`.",
+  "files": [
+   "src/ui/controls/index.tsx",
+   "src/ui/steps/ChartStep.tsx",
+   "src/ui/steps/AnnotateStep.tsx",
+   "src/ui/steps/PublishStep.tsx",
+   "src/ui/steps/DataStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "src/ui/controls/index.tsx:19-23 — `<div className=\"field\">{label && <label>{label}</label>}{children}{hint && <span className=\"hint\">{hint}</span>}</div>`. `grep -rn \"htmlFor\\|aria-label\" src/` só retorna Canvas.tsx:392, App.tsx:262 e svg.ts:152."
+ },
+ {
+  "id": "tablist-sem-tabpanel",
+  "title": "role=tablist sem tabpanel e sem setas do teclado",
+  "dimension": "acessibilidade",
+  "problem": "src/ui/App.tsx:186-201 declara `role=\"tablist\"` com quatro `role=\"tab\"` e `aria-selected` corretos, mas o padrão para aí: (a) o `<div className=\"panel-body\">` (linha 204) que recebe o conteúdo não tem `role=\"tabpanel\"`, nem `aria-labelledby`, nem `tabIndex={0}`; (b) as tabs não têm `id` nem `aria-controls`, então o leitor de tela anuncia \"aba 1 de 4\" sem dizer o que ela controla; (c) não há tabIndex móvel nem navegação por setas — as quatro abas ficam todas na sequência de Tab, contrariando o comportamento que `role=\"tab\"` promete; (d) o `tablist` não tem `aria-label`. O checkmark de conclusão também é só o glifo `✓` dentro de um `<span>` (linha 197), sem texto alternativo: \"Dados concluído\" e \"Dados\" soam idênticos.",
+  "proposal": "Dar `id={'tab-'+item.id}` e `aria-controls=\"step-panel\"` a cada tab; `tabIndex={step === item.id ? 0 : -1}`; `onKeyDown` tratando ArrowLeft/ArrowRight/Home/End com foco programático. Marcar o `.panel-body` como `role=\"tabpanel\" id=\"step-panel\" tabIndex={0} aria-labelledby={'tab-'+step}`. Pôr `aria-label=\"Etapas do editor\"` no tablist e, no span do número, `<span className=\"sr-only\">{completed[item.id] ? 'concluída' : `etapa ${item.n}`}</span>` com `aria-hidden` no glifo.",
+  "files": [
+   "src/ui/App.tsx",
+   "src/ui/styles.css"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "src/ui/App.tsx:186-201 — `<div className=\"steps\" role=\"tablist\">` … `<button role=\"tab\" className=\"step-tab\" aria-selected={step === item.id}>`; nenhum `id`, `aria-controls`, `tabIndex` ou `onKeyDown` no bloco, e o painel na linha 204 é `<div className=\"panel-body\">`."
+ },
+ {
+  "id": "toast-sem-regiao-viva",
+  "title": "Toast não é anunciado por leitor de tela",
+  "dimension": "acessibilidade",
+  "problem": "src/ui/App.tsx:305 renderiza `{toast && <div className=\"toast\">{toast}</div>}` sem `role=\"status\"` nem `aria-live`. O toast é o único canal de retorno de várias ações irreversíveis ou demoradas: \"PNG @2x gerado\", \"Falha ao gerar o PNG.\" (PublishStep.tsx:33), \"Projeto carregado\" ou a mensagem de erro do JSON (PublishStep.tsx:183), \"Código do iframe copiado\" vs. \"Copie o código abaixo manualmente\" (PublishStep.tsx:141-144), e o resumo de ingestão com contagem de linhas/colunas e separador detectado (DataStep.tsx:49-52). Para quem usa leitor de tela, exportar um PNG e falhar é indistinguível de exportar e dar certo. O elemento ainda entra e sai do DOM, o que faz o anúncio depender da região viva existir antes.",
+  "proposal": "Renderizar sempre o contêiner e trocar só o conteúdo: `<div className=\"toast-region\" role=\"status\" aria-live=\"polite\" aria-atomic=\"true\">{toast && <div className=\"toast\">{toast}</div>}</div>`. Para as mensagens de falha (`Falha ao gerar o PNG`, erro de JSON) vale um segundo canal com `role=\"alert\"`, ou um campo `severity` no store para escolher entre `status` e `alert`. Como o timer de 3,2 s (App.tsx:111-115) pode cortar a fala, considerar não expirar mensagens de erro.",
+  "files": [
+   "src/ui/App.tsx",
+   "src/state/store.ts",
+   "src/ui/styles.css"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "src/ui/App.tsx:305 — `{toast && <div className=\"toast\">{toast}</div>}`; `grep -rn \"aria-live\\|role=\\\"status\\\"\\|role=\\\"alert\\\"\" src/` não retorna nada."
+ },
+ {
+  "id": "apresentacao-sem-gestao-de-foco",
+  "title": "Modo apresentação não prende nem devolve o foco",
+  "dimension": "acessibilidade",
+  "problem": "O overlay em src/ui/App.tsx:287-303 tem `role=\"dialog\" aria-modal=\"true\"`, e o Esc funciona (App.tsx:127-131, listener em `window`), mas nada mais do contrato de modal existe: (a) o foco nunca entra no diálogo — continua no botão \"Apresentar\" atrás do overlay, então Tab passeia pelo editor inteiro que está visualmente coberto; (b) `aria-modal` não torna o resto inerte na prática para navegação por Tab, e nada recebe `inert`/`aria-hidden`; (c) se o usuário fecha pelo botão \"fechar ✕\" (linha 289), esse botão é desmontado e o foco cai no `<body>` — quem navega por teclado volta ao topo do documento; (d) o diálogo não tem nome acessível (sem `aria-label`/`aria-labelledby`), então é anunciado como \"diálogo\" e nada mais; (e) o `.presentation-stage` (linha 297) é um `<div>` com `onClick` para fechar, invisível ao teclado.",
+  "proposal": "Guardar `document.activeElement` ao abrir, focar o botão de fechar no `useEffect` de abertura, e restaurar o foco no elemento salvo ao fechar (por Esc ou por clique). Prender o Tab dentro do diálogo com um handler de `keydown` sobre o contêiner, ou aplicar `inert` no `.workspace`/`.topbar` enquanto `presenting`. Nomear o diálogo com `aria-label={spec.text.title || 'Apresentação do gráfico'}`. Trocar o `.presentation-stage` clicável por um `<button className=\"presentation-backdrop\">` com `aria-label=\"Fechar apresentação\"`, ou deixá-lo `aria-hidden` já que o botão explícito cobre o caso.",
+  "files": [
+   "src/ui/App.tsx",
+   "src/ui/styles.css"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "src/ui/App.tsx:288 — `<div className=\"presentation\" role=\"dialog\" aria-modal=\"true\">` sem `aria-label`; o componente não tem `useRef`/`focus()` em lugar nenhum, e `grep -rn autoFocus src/` não retorna nada."
+ },
+ {
+  "id": "abrir-projeto-sem-teclado",
+  "title": "Abrir projeto salvo é inalcançável por teclado",
+  "dimension": "acessibilidade",
+  "problem": "Em src/ui/steps/PublishStep.tsx:170-188 o botão \"Abrir projeto salvo\" é um `<label className=\"btn\">` que embrulha `<input type=\"file\" style={{ display: 'none' }} />`. `display:none` remove o input da ordem de foco, e um `<label>` não é focável — logo não existe nenhum caminho de teclado para carregar um `.datastories.json`. É a única forma de reabrir um projeto no editor. O mesmo padrão aparece na etapa Dados: a dropzone (DataStep.tsx:111-127) é uma `<div>` com `onClick` e `onDrop`, sem `tabIndex`, sem `role`, sem `onKeyDown` — ali o dano é menor porque o botão \"Abrir CSV\" (DataStep.tsx:94) dispara o mesmo input, mas a área que parece o alvo principal continua morta para o teclado.",
+  "proposal": "Trocar o `<label>` por um `<button type=\"button\" className=\"btn\">` que chame `fileInput.current?.click()`, mantendo o input fora da tela em vez de `display:none` (`className=\"sr-only\"` ou `position:absolute;width:1px;height:1px;clip-path:inset(50%)`) — o mesmo arranjo que a etapa Dados já usa. Para a dropzone, dar `role=\"button\" tabIndex={0}` e `onKeyDown` para Enter/Espaço, ou marcá-la `aria-hidden=\"true\"` e deixar o botão \"Abrir CSV\" como a rota anunciada.",
+  "files": [
+   "src/ui/steps/PublishStep.tsx",
+   "src/ui/steps/DataStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "src/ui/steps/PublishStep.tsx:170-176 — `<label className=\"btn\" style={{ textAlign: 'center', cursor: 'pointer' }}>Abrir projeto salvo<input type=\"file\" accept=\".json,application/json\" style={{ display: 'none' }} …/></label>`."
+ },
+ {
+  "id": "contraste-do-texto-secundario",
+  "title": "Texto secundário a 2,6:1 e bordas de campo a 1,5:1",
+  "dimension": "acessibilidade",
+  "problem": "A variável `--muted-soft: #98a1ac` (src/ui/styles.css:17) rende 2,62:1 sobre `--panel` #ffffff e 2,46:1 sobre `--panel-alt` #f7f8fa — bem abaixo dos 4,5:1 exigidos, e nem chega aos 3:1 de texto grande (todos esses usos são de 10 a 11,5 px). Ela pinta justamente o texto que carrega a doutrina editorial do produto: os títulos de seção `.group > h3` (linha 329), `.field .hint` (346), `.inline-note` (976), os placeholders (388), o `.row-index` da grade (683) e o número da etapa `.step-tab span.n` (172). `--muted: #5f6873` está bem (5,65:1), então o problema é localizado. Nos limites de componente a falha se repete: `--border-strong: #c9d1da` nas bordas de input/botão (366, 394) dá 1,54:1 sobre branco e `--border: #e3e7ec` nos cartões de tipo de gráfico (502) é ainda mais fraco, contra os 3:1 de 1.4.11.",
+  "proposal": "Escurecer `--muted-soft` para algo em torno de #6e7783 (≈4,6:1 sobre #fff e ≈4,4:1 sobre #f7f8fa — verificar com o mesmo cálculo de src/core/theme/contrast.ts, que já existe no núcleo) e reservar o tom claro atual só para elementos decorativos como o `.lint-dot.dica`. Levar `--border-strong` para ~#9aa4b0 (3:1) nos elementos que delimitam controle — input, select, `.btn`, `.chip` — mantendo `--border` claro apenas em divisórias puramente estéticas. Vale rodar o próprio `contrast.ts` sobre a paleta da interface num teste, do mesmo jeito que as paletas do gráfico já são auditadas.",
+  "files": [
+   "src/ui/styles.css"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "src/ui/styles.css:17 `--muted-soft: #98a1ac;` usado em .group > h3 (329), .field .hint (346), .inline-note (976), input::placeholder (388), .row-index (683) e .step-tab span.n (172); src/ui/styles.css:19 `--border-strong: #c9d1da` aplicado à borda de input/select/textarea (366) e .btn (394)."
+ },
+ {
+  "id": "grafico-sem-acesso-por-teclado",
+  "title": "Gráfico é opaco e só responde a ponteiro",
+  "dimension": "acessibilidade",
+  "problem": "O SVG do editor declara `role=\"img\"` com `aria-label={spec.text.title}` (src/ui/Canvas.tsx:391-392). Isso colapsa a árvore inteira num único rótulo: subtítulo, títulos de eixo, rótulos de categoria, legenda, fonte, crédito e as anotações — todos desenhados como nós `text` — deixam de existir para a tecnologia assistiva, e o único conteúdo restante é a string do título. Nenhum dos dados chega. E toda a interação é de ponteiro: `onClick` (Canvas.tsx:343-372) para destacar série/categoria, `onPointerDown`/`onPointerMove` (215-328) para arrastar a anotação e para o tooltip. Nenhum nó recebe `tabIndex` — `grep -rn \"tabIndex\\|onKeyDown\" src/` não retorna nada —, então nem destacar, nem selecionar uma anotação, nem consultar um valor é possível sem mouse. O editor também não oferece em lugar nenhum a tabela do que está plotado.",
+  "proposal": "Dar `tabIndex={0}` e `role=\"button\"` com `aria-label` (\"série X, categoria Y, valor Z\") aos nós que já têm `node.meta`, agrupados por série para não gerar centenas de paradas de Tab; no `onKeyDown`, Enter/Espaço executam o mesmo `update` do clique e o foco exibe o mesmo conteúdo do tooltip via `aria-describedby`. Para a anotação selecionada, tratar as setas no handler global de App.tsx e mover `x`/`y` em 1% (0,25% com Shift), reusando o `coalesceKey` de arrasto. Complementar com uma tabela alternativa em `<details><summary>Ver os dados</summary>`: `scene.series`, `scene.categories` e `node.meta` (src/core/types.ts:310-315, 410-420) já têm tudo o que ela precisa, sem tocar no modelo.",
+  "files": [
+   "src/ui/Canvas.tsx",
+   "src/ui/App.tsx",
+   "src/ui/styles.css"
+  ],
+  "impact": "alto",
+  "effort": "alto",
+  "evidence": "src/ui/Canvas.tsx:391-398 — `role=\"img\" aria-label={spec.text.title || 'Gráfico'} onPointerDown={onPointerDown} … onClick={onClick}`; nenhum `tabIndex`/`onKeyDown` em todo o src/."
+ },
+ {
+  "id": "svg-exportado-sem-nome-confiavel",
+  "title": "SVG exportado: desc ignorado e nome que some",
+  "dimension": "export",
+  "problem": "`sceneToSvg` (src/core/export/svg.ts:149-156) emite `role=\"img\"` mais `aria-label` e, em paralelo, `<title>`/`<desc>`. Duas consequências reais: (1) `aria-label` vence o `<title>` no cálculo do nome acessível, e `<desc>` não vira descrição sem um `aria-describedby` apontando para ele — ou seja, o subtítulo que `downloadSvg` e `buildEmbedHtml` passam como `description` (export/index.ts:50, 120) nunca é lido; (2) quando `options.title` está vazio, o SVG sai como `role=\"img\"` sem nome nenhum — uma imagem anônima, que é o pior resultado possível. O `role=\"img\"` ainda esconde da tecnologia assistiva todo o texto interno já desenhado (fonte, nota, crédito, títulos de eixo), justamente o conteúdo editorial que o produto insiste em ter.",
+  "proposal": "Emitir `<title id=\"ds-title\">` e `<desc id=\"ds-desc\">` com ids únicos e referenciá-los por `aria-labelledby`/`aria-describedby` em vez de `aria-label`. Compor a `desc` com subtítulo + fonte + nota + crédito, não só o subtítulo. Quando não houver título, cair para um nome gerado a partir do tipo de gráfico e das séries (\"Gráfico de barras: Norte, Sul — 2023 a 2024\") em vez de omitir o atributo. Passar `title`/`description` também em `sceneToPngBlob` (export/index.ts:64), que hoje chama sem nada — o metadado não afeta o PNG, mas evita que a única chamada sem título vire o caminho padrão copiado adiante. Acrescentar `lang` ao `<svg>` para o leitor pronunciar o português corretamente em página de outro idioma.",
+  "files": [
+   "src/core/export/svg.ts",
+   "src/core/export/index.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "src/core/export/svg.ts:152 — `` `role=\"img\"${options.title ? ` aria-label=\"${escapeXml(options.title)}\"` : ''} ` ``; linhas 145-147 montam `<title>`/`<desc>` sem `id` e sem `aria-describedby`."
+ },
+ {
+  "id": "embed-sem-alternativa-textual",
+  "title": "Embed HTML sai sem alternativa em tabela",
+  "dimension": "export",
+  "problem": "`buildEmbedHtml` (src/core/export/index.ts:116-143) produz uma página cujo `<body>` contém apenas `<div class=\"datastories-embed\">${svg}</div>`. Combinado com o `role=\"img\"` do SVG, o arquivo que o jornalista cola no CMS entrega ao leitor de tela uma imagem com um rótulo e absolutamente nada mais: nem os valores, nem a fonte, nem a nota metodológica. É o ponto em que a acessibilidade deixa de ser do editor e passa a ser do produto publicado — cada gráfico distribuído carrega a falha. Além disso, `buildIframeSnippet` (linha 155) interpola `title=\"${spec.text.title || 'Gráfico'}\"` sem escapar: um título com aspas duplas (\"Vendas do \\\"Norte\\\" caem 23%\") quebra o atributo e derruba o nome acessível do iframe — o `.replace(/\"/g, '&quot;')` da linha 154 só cobre o `srcdoc`.",
+  "proposal": "Gerar uma tabela a partir de `scene.series`, `scene.categories` e dos `node.meta` (src/core/types.ts:310-315) e embuti-la no embed dentro de `<details><summary>Ver os dados</summary>`, com `<caption>` = título, `<th scope=\"col\">` nas séries e `<th scope=\"row\">` nas categorias, mais um `<p>` com fonte, nota e crédito. Fica útil para todo mundo, não só para quem usa leitor de tela, e é o que Datawrapper e ONS fazem. Escapar o título do iframe com a mesma função `escape` já definida na linha 123. Expor a construção da tabela como `sceneToDataTable(scene)` em src/core/export/ para os testes cobrirem-na junto com o SVG.",
+  "files": [
+   "src/core/export/index.ts",
+   "src/core/export/svg.ts",
+   "tests/render.test.ts"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "src/core/export/index.ts:138-140 — `<body>\\n<div class=\"datastories-embed\">${svg}</div>\\n</body>`; linha 155 — `` return `<iframe title=\"${spec.text.title || 'Gráfico'}\" style=...` `` sem escape."
+ },
+ {
+  "id": "preferencias-do-sistema",
+  "title": "Reduced-motion apaga marcas; sem tema escuro",
+  "dimension": "acessibilidade",
+  "problem": "O bloco `@media (prefers-reduced-motion: reduce)` (src/ui/styles.css:55-62) zera `animation-duration` e `transition-duration`, mas não `animation-delay`. A cascata de entrada das marcas define o atraso inline, `animationDelay: ${Math.min(index * 18, 360)}ms` (src/ui/Canvas.tsx:65-67), e a animação usa `both` (styles.css:1016), que mantém o estado `from { opacity: 0 }` durante o atraso. Com movimento reduzido ligado, o resultado é pior que sem: as marcas ficam invisíveis por até 360 ms e depois aparecem de estalo, uma a uma — exatamente o efeito que a preferência queria evitar. Na outra ponta, `styles.css` não tem nenhum `@media (prefers-color-scheme: dark)`: a moldura é #f2f4f6/#ffffff fixo, e quem trabalha em tema escuro por fotofobia ou enxaqueca encara um editor de tela cheia branco, ainda que o gráfico tenha temas escuros disponíveis.",
+  "proposal": "Acrescentar `animation-delay: 0ms !important;` e `animation-iteration-count: 1 !important;` ao bloco de movimento reduzido — o `!important` já vence o estilo inline do Canvas para as propriedades declaradas. Como o `mark-enter` só existe para dar vida à entrada, também dá para desligá-lo por completo ali com `animation: none !important`. Para o esquema de cor, extrair a paleta da interface para tokens já centralizados em `:root` (o arquivo faz isso) e redefinir os mesmos tokens sob `@media (prefers-color-scheme: dark)`, verificando os pares com src/core/theme/contrast.ts. A tela do gráfico continua pintando o fundo do tema escolhido, então só a moldura muda.",
+  "files": [
+   "src/ui/styles.css",
+   "src/ui/Canvas.tsx"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "src/ui/styles.css:55-62 declara só `animation-duration` e `transition-duration`; src/ui/Canvas.tsx:65-67 — `const markStyle = node.meta ? { animationDelay: `${Math.min(index * 18, 360)}ms` } : undefined`; styles.css:1016 — `animation: mark-enter 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;`."
+ },
+ {
+  "id": "alvos-de-toque-pequenos",
+  "title": "Alvos de toque de 15 a 22 px na interface",
+  "dimension": "acessibilidade",
+  "problem": "Vários controles ficam abaixo do mínimo de 24×24 px (WCAG 2.2, 2.5.8) e muito abaixo dos 44 px recomendados para toque. Os piores são os botões de coluna da grade, `.col-btn` (src/ui/styles.css:639-649): `padding: 2px 3px`, `font-size: 11px`, `line-height: 1` — cerca de 15×17 px para as ações de ocultar e de EXCLUIR uma coluna inteira, que são vizinhas. `.btn.tiny` (437-441), usada em \"+ linha\", \"+ coluna\", \"remover\" anotação, \"+ texto/linha/faixa/ponto\" e nas setas de paginação, fica em ~22 px de altura; `.chip` (795-808), que é o controle principal de escolher colunas de valores e de destacar séries, também fica em ~22 px. Nenhum deles tem margem de separação que compense o tamanho.",
+  "proposal": "Definir um piso com `min-height: 24px` (e `min-width: 24px` nos botões-ícone) nessas três classes, ampliando a área clicável por padding em vez de aumentar a fonte — o layout compacto se preserva. Para `.col-btn`, subir para 28×28 px e separar visualmente a ação destrutiva da ação reversível (um espaçador ou um menu), já que 15 px lado a lado convida ao erro. Para as setas de paginação, usar `.btn` normal em vez de `.btn.tiny`.",
+  "files": [
+   "src/ui/styles.css"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "src/ui/styles.css:639-649 — `.col-btn { padding: 2px 3px; font-size: 11px; line-height: 1; }`; 437-441 — `.btn.tiny { padding: 3px 7px; font-size: 11.5px; }`; 795-808 — `.chip { padding: 3px 10px; font-size: 12px; }`."
+ },
+ {
+  "id": "grade-de-dados-sem-semantica",
+  "title": "Grade de dados sem cabeçalhos nem nomes",
+  "dimension": "acessibilidade",
+  "problem": "A tabela de src/ui/DataGrid.tsx:167-274 não tem `<caption>` e nenhum `<th>` traz `scope` (linha 174), então o leitor de tela não associa célula a coluna. Cada célula é um `<input type=\"text\">` sem nome acessível nenhum (linhas 264-268): numa tabela de 50 linhas × 6 colunas são 300 campos anunciados como \"campo de edição\" idênticos, sem dizer linha nem coluna. Os botões de ação da coluna (190-213) passam `title`, mas o conteúdo visível é o emoji `👁`/`🚫` e o `×` — e conteúdo vence `title` no cálculo do nome acessível, então eles são anunciados como \"olho\" e \"sinal de multiplicação\", com o texto explicativo descartado. Pior: `.col-actions` fica em `opacity: 0` e só reaparece em `thead th:hover` (styles.css:627-637), sem regra `:focus-within` — quem chega neles por Tab foca botões literalmente invisíveis, um deles destrutivo. E remover uma linha só existe como duplo clique num `<td>` (247-253), sem equivalente de teclado.",
+  "proposal": "Pôr `scope=\"col\"` nos `<th>` e um `<caption className=\"sr-only\">` com a contagem de linhas e colunas. Dar `aria-label={`${name}, linha ${rowIndex + 1}`}` a cada input de célula (barato: os dois valores já estão no escopo do `map`). Trocar o conteúdo dos botões de coluna por `<span aria-hidden=\"true\">👁</span>` mais um `<span className=\"sr-only\">` com o texto que hoje está no `title`. Acrescentar `table.data-grid thead th:focus-within .col-actions { opacity: 1 }` à regra da linha 634. Substituir o duplo clique por um botão \"remover linha\" na célula de índice, seguindo o mesmo padrão de revelar-no-hover-e-no-foco.",
+  "files": [
+   "src/ui/DataGrid.tsx",
+   "src/ui/styles.css"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "src/ui/DataGrid.tsx:174 — `<th key={columnIndex} className={isHidden ? 'th-hidden' : undefined}>` sem `scope`; 264-268 — `<input type=\"text\" value={row[columnIndex] ?? ''} onChange={…} />` sem rótulo; src/ui/styles.css:634-637 — `table.data-grid thead th:hover .col-actions, table.data-grid thead th.th-hidden .col-actions { opacity: 1; }`."
+ },
+ {
+  "id": "formato-de-numeros-sem-controle",
+  "title": "Formato de número existe no engine e não é exposto",
+  "dimension": "funcionalidade",
+  "problem": "`axes.y.format` (src/core/types.ts:132) está implementado duas vezes no engine: em `makeValueFormatter` (src/core/frame.ts:604-620) para os rótulos de tick e em `makeDatumFormatter` (src/core/frame.ts:558-570) para os números sobre as marcas, os dois com fallback silencioso para o automático quando o especificador é inválido — comportamento pensado para quem está digitando. Nenhum controle na UI: o grupo Eixos do ChartStep expõe min, max, unidade, título, zero, grade, rótulo de categoria e log (src/ui/steps/ChartStep.tsx:398-489) e nunca `format`. O usuário não consegue fixar casas decimais, pedir separador de milhar, prefixo de moeda ou percentual — o que no Datawrapper é o primeiro ajuste depois de escolher o gráfico. Pior: `axes.y.unit` só é colado no ÚLTIMO tick (src/core/frame.ts:425), não nos rótulos de valor sobre as marcas, e o tooltip ignora o formato por completo (src/ui/Canvas.tsx:426 chama `formatNumber(hover.value, null, ...)`).",
+  "proposal": "No grupo Eixos, um Segmented de receitas prontas que escreve o especificador d3-format em `axes.y.format` (automático, inteiro `,.0f`, 1 casa `,.1f`, 2 casas `,.2f`, milhares `,.0f` com abreviação, percentual `.0%`) mais um TextInput avançado para quem quiser o especificador cru, com o erro já tolerado pelo engine virando dica visual. Acrescentar `prefix` ao AxisSpec (o `unit` já é o sufixo) e aplicar prefixo+sufixo em `formatDatum` e no tooltip do Canvas, não só no último tick.",
+  "files": [
+   "src/ui/steps/ChartStep.tsx",
+   "src/core/types.ts",
+   "src/core/frame.ts",
+   "src/ui/Canvas.tsx",
+   "src/core/schema.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "frame.ts:612 `if (spec.axes.y.format) { const custom = spec.axes.y.format ... }` — caminho completo, testado, e sem nenhum `draft.axes.y.format =` em todo o src/ui."
+ },
+ {
+  "id": "eixo-x-inerte",
+  "title": "Eixo X: 8 dos 10 campos do AxisSpec são ignorados",
+  "dimension": "engine",
+  "problem": "`AxisSpec` tem title, min, max, zero, grid, ticks, format, unit, visible e log (src/core/types.ts:123-138), e o spec guarda um objeto desses para cada eixo (src/core/types.ts:295). O engine lê de `axes.x` apenas `visible` (src/core/frame.ts:278) e `title` (src/core/frame.ts:521); min, max, zero, grid, ticks, format, unit e log de x não aparecem em lugar nenhum do código. Isso quebra justamente os gráficos de eixo x numérico: a dispersão usa `categoryKind: 'linear'` (src/core/render/cartesian.ts:454) e o domínio horizontal vem sempre do extent bruto dos dados (src/core/frame.ts:347-357) — não dá para fixar onde o eixo começa, nem formatar seus rótulos, nem pedir log. E `axes.x.title`, que o engine DESENHA, não tem controle nenhum: o ChartStep só escreve `axes.x.visible` (src/ui/steps/ChartStep.tsx:472-478).",
+  "proposal": "Fazer `buildFrame` ler `axes.x.min/max` no ramo linear/time do cálculo de domínio (frame.ts:347-357), `axes.x.ticks` no `pickTickCount` da categoria (frame.ts:365 e 376), `axes.x.format` no `autoNumberFormatter` dos ticks de categoria (frame.ts:381) e `axes.x.grid` para grade vertical opcional. Na UI, transformar o grupo Eixos em duas abas — 'Eixo de valores' e 'Eixo horizontal' — com os mesmos controles, exibindo a segunda só quando `model.xType` for number ou date. O título do eixo x entra aí, ao lado do de valores que já existe.",
+  "files": [
+   "src/core/frame.ts",
+   "src/ui/steps/ChartStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "`grep -rn 'axes\\.x' src` retorna apenas 4 ocorrências fora de types.ts: frame.ts:278 (visible), frame.ts:521 e 526 (title) e ChartStep.tsx:472/476 (visible)."
+ },
+ {
+  "id": "agregacao-por-categoria",
+  "title": "Sem agregação: linhas repetidas somem em silêncio",
+  "dimension": "funcionalidade",
+  "problem": "`buildModel` mapeia linha da tabela para categoria 1:1 (src/core/model.ts:251 `working.rows.map(row => row[xColumn] ?? null)`), sem nenhuma agregação. Uma tabela de transações com 800 linhas e uma coluna 'mês' vira 800 categorias com rótulos repetidos, não 12 barras. No formato longo é pior que feio: `pivotLongToWide` indexa por `String(row[xColumn])` e sobrescreve o registro a cada linha (src/core/dataset/transform.ts:175-181), então o último valor vence e os anteriores desaparecem sem aviso nem entrada no linter. O `TransformSpec` (src/core/types.ts:51-60) não tem campo de agregação — só transpose, sort, limit e ocultar.",
+  "proposal": "Adicionar `aggregate: { by: string | null; op: 'soma'|'media'|'mediana'|'contagem'|'min'|'max' } | null` ao TransformSpec, aplicado em `deriveDataset` depois da coerção de tipos e antes de ordenar/limitar, e usar a mesma operação dentro de `pivotLongToWide` em vez do último-vence. Na etapa Dados, um grupo 'Agrupar' com Select de coluna + Segmented de operação. Complementar com uma regra de linter que detecte valores de x duplicados sem agregação definida — hoje o usuário não tem como perceber que perdeu dado.",
+  "files": [
+   "src/core/types.ts",
+   "src/core/schema.ts",
+   "src/core/dataset/transform.ts",
+   "src/core/model.ts",
+   "src/ui/steps/DataStep.tsx",
+   "src/advisor/lint.ts"
+  ],
+  "impact": "alto",
+  "effort": "alto",
+  "evidence": "transform.ts:180 — `record[name] = typeof value === 'number' ? value : null` dentro do laço sobre todas as linhas: a segunda ocorrência do mesmo par (x, série) apaga a primeira."
+ },
+ {
+  "id": "tema-personalizado-nao-editavel",
+  "title": "theme.overrides existe e nenhuma UI escreve nele",
+  "dimension": "design",
+  "problem": "`getTheme` mescla `spec.theme.overrides` sobre o tema base (src/core/theme/themes.ts:119-123), o schema aceita os 18 tokens de forma parcial (src/core/schema.ts:119-140), o arquivo salvo já carrega isso e o App recalcula o tema quando `overrides` muda (src/ui/App.tsx:57-60). Nenhum ponto da UI escreve em `theme.overrides` — `grep -rn 'theme.overrides' src` só devolve leituras. O usuário fica preso aos quatro temas fixos (src/core/theme/themes.ts:22-115): não dá para trocar a paleta pelas cores da casa, mudar a família da fonte do título, aumentar o titleSize para um slide, nem desligar o filete do accent (`rule`). Para quem tem manual de marca, é o motivo de não adotar a ferramenta.",
+  "proposal": "Grupo 'Ajustar tema' na etapa Gráfico, logo abaixo dos quatro temas: ColorInput para background/foreground/accent, editor da paleta categórica (lista de cores com + e −, alimentando o auditor de daltonismo que já existe), Select de família entre as pilhas de sistema já definidas (SANS/SERIF/CONDENSED, themes.ts:16-20), NumberInput de titleSize e Toggle do `rule` — cada um gravando em `theme.overrides`, com botão 'voltar ao tema'. Em seguida, salvar esse conjunto como tema do usuário no localStorage e um chip 'aplicar meu tema' em qualquer gráfico.",
+  "files": [
+   "src/ui/steps/ChartStep.tsx",
+   "src/core/theme/themes.ts",
+   "src/state/store.ts"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "themes.ts:121 `if (!overrides || Object.keys(overrides).length === 0) return base` — o caminho de personalização está pronto e é sempre o ramo do return antecipado, porque overrides está sempre vazio."
+ },
+ {
+  "id": "biblioteca-de-graficos",
+  "title": "Sem biblioteca de gráficos e sem duplicar",
+  "dimension": "ux",
+  "problem": "O store guarda um único rascunho em localStorage, sob a chave `datastories:rascunho` (src/state/store.ts:20, persistido em store.ts:77-85). Abrir um projeto salvo (src/ui/steps/PublishStep.tsx:170-188) ou clicar em 'Começar do zero' (store.ts:177-182) sobrescreve o rascunho atual sem volta. Não existe listar, duplicar nem 'salvar como': um gráfico feito ontem só volta se o .json foi baixado à mão. `spec.id` é gerado a cada spec (src/core/schema.ts:145) e nunca é usado para nada. Duplicar é a operação mais frequente do Datawrapper — mesmo gráfico, outro recorte — e aqui exige baixar, começar do zero e reabrir o arquivo.",
+  "proposal": "Chave `datastories:biblioteca` com um índice `{ id, titulo, tipo, atualizadoEm }` mais o spec de cada gráfico, salvando por `spec.id` em vez de por rascunho único. Uma gaveta 'Meus gráficos' na barra superior com abrir, duplicar (novo id, título + ' (cópia)') e excluir; miniatura opcional reaproveitando `sceneToSvg`. O botão 'Começar do zero' passa a arquivar o gráfico atual em vez de descartá-lo.",
+  "files": [
+   "src/state/store.ts",
+   "src/ui/App.tsx",
+   "src/ui/steps/PublishStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "store.ts:20 `const STORAGE_KEY = 'datastories:rascunho'` — chave única; store.ts:180 `set({ spec: fresh, past: [], future: [] ... })` descarta o trabalho anterior sem cópia."
+ },
+ {
+  "id": "embed-escala-em-vez-de-redesenhar",
+  "title": "O embed escala o SVG em vez de redesenhar",
+  "dimension": "export",
+  "problem": "`buildEmbedHtml` produz responsividade por escala: `.datastories-embed svg { width: 100%; height: auto }` dentro de um contêiner com `max-width` fixo na largura do spec (src/core/export/index.ts:133-136). Só que toda a tipografia, as margens e o rareamento de rótulos foram calculados em `buildFrame` para aquela largura específica (src/core/frame.ts:96-113 recebe width/height e mede o texto real). Numa coluna de 320px, um rótulo de 12px é exibido a ~5px, o filete do accent vira um fio e o título quebrado para 760px fica com linhas curtíssimas. O editor tem preview de 380px (src/ui/App.tsx:36) e ali o React redesenha de verdade — o embed publicado, não. É a diferença mais visível para quem vem do Datawrapper, cujo embed é responsivo de fato.",
+  "proposal": "Gerar duas ou três cenas no embed (mobile ~360, artigo ~700, largo ~1000), embutir os SVGs no mesmo arquivo e alternar por media query — mantém a promessa de arquivo autocontido e sem rede que o comentário do módulo faz (export/index.ts:110-115) e resolve a maioria dos casos. Alternativa mais completa: embutir `spec` como JSON e um script mínimo chamando `renderChart` com a largura observada por ResizeObserver, como o Canvas já faz; nesse caso o embed deixa de ser 'sem scripts' e isso precisa ser uma opção explícita na etapa Publicar.",
+  "files": [
+   "src/core/export/index.ts",
+   "src/ui/steps/PublishStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "alto",
+  "evidence": "export/index.ts:135 `.datastories-embed svg { width: 100%; height: auto; display: block; }` — a única regra responsiva do embed é escala uniforme."
+ },
+ {
+  "id": "anotacoes-campos-sem-controle",
+  "title": "Anotação: alvo da seta, tamanho e cor sem controle",
+  "dimension": "funcionalidade",
+  "problem": "`TextAnnotation` tem `size` (src/core/types.ts:181) e `connector.tx/ty/arrow` (src/core/types.ts:186-192), todos usados no desenho (src/core/annotate/annotations.ts:314, 362, 356). A UI não expõe nenhum dos três: o cartão de texto oferece alinhamento, seta liga/desliga, fundo, negrito e cor (src/ui/steps/AnnotateStep.tsx:322-396). E o arrasto no gráfico move só x/y, porque o único nó com handle é o bloco de texto (annotations.ts:409, `handle: annotation:${id}`), tratado em src/ui/Canvas.tsx:214-243 — ou seja, o alvo da seta fica congelado em (0,65 / 0,45), o valor literal do botão '+ texto' (AnnotateStep.tsx:230), e a seta aponta para o lugar errado em todo gráfico que não seja o do exemplo. Anotações de linha, faixa e ponto também têm `color` no spec (types.ts:203, 214, 225), honrado no desenho (annotations.ts:107, 164, 271), sem nenhum ColorInput — o único está no ramo de texto (AnnotateStep.tsx:386).",
+  "proposal": "Emitir um segundo nó arrastável na ponta da seta com `handle: annotation-target:${id}` e tratá-lo no `onPointerDown` do Canvas escrevendo `connector.tx/ty` (a matemática de fração já existe, é a mesma de x/y). Acrescentar NumberInput de tamanho e Toggle 'ponta de seta' ao cartão de texto, e reutilizar o ColorInput existente nos cartões de linha, faixa e ponto — quatro controles de uma linha cada.",
+  "files": [
+   "src/ui/steps/AnnotateStep.tsx",
+   "src/ui/Canvas.tsx",
+   "src/core/annotate/annotations.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "annotations.ts:409 é o ÚNICO `handle:` do arquivo inteiro — nenhuma outra parte da anotação é agarrável no gráfico."
+ },
+ {
+  "id": "encoding-size-e-label-mortos",
+  "title": "encoding.size e encoding.label não fazem nada",
+  "dimension": "funcionalidade",
+  "problem": "`Encoding` declara `size` e `label` (src/core/types.ts:117-118) e o schema os valida (src/core/schema.ts:51-52). `label` não é lido em nenhum arquivo do projeto — `grep -rn 'encoding.label' src` volta vazio. `size` aparece uma vez só, em src/core/model.ts:248, e apenas para excluir a coluna da inferência automática de y. `drawScatter` usa raio fixo (src/core/render/cartesian.ts:269 `const radius = spec.chart.options.pointRadius + 1.5`) e não escreve o nome de nenhum ponto: numa dispersão de 27 estados, ninguém descobre qual ponto é qual sem passar o mouse — e no PNG exportado, nunca. Bolha por terceira variável e ponto identificado são exatamente o que se espera de uma dispersão editorial.",
+  "proposal": "Em `drawScatter`, escala de raio por `encoding.size` (raiz quadrada, área proporcional) com legenda de tamanho de três círculos, e rótulo por ponto vindo de `encoding.label`, respeitando `labels.labelHighlightedOnly` para não virar sopa. No grupo Colunas do ChartStep, dois Selects visíveis só quando o tipo for dispersão — o padrão de campo condicional já usado ali para a coluna de meta do bullet (src/ui/steps/ChartStep.tsx:184-198).",
+  "files": [
+   "src/core/render/cartesian.ts",
+   "src/ui/steps/ChartStep.tsx",
+   "src/core/model.ts"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "cartesian.ts:269 — raio constante para todos os pontos; o laço de drawScatter só emite `circle` e, quando `labels.valueLabels` está ligado e há ≤40 pontos, o valor de y — nunca o nome da observação."
+ },
+ {
+  "id": "cor-por-categoria",
+  "title": "Cor só por série: barra individual não recebe cor",
+  "dimension": "design",
+  "problem": "`resolveColors` resolve as cores por nome de série e consulta `spec.color.overrides` apenas com esse nome (src/core/model.ts:119-126). O destaque por categoria, tratado em `markColor`, só escolhe entre `series.color` e `theme.mutedSeries` (src/core/render/context.ts:74-80). E o painel 'Cores por série' itera `model.series` (src/ui/steps/AnnotateStep.tsx:191-205). Resultado: num gráfico de barras com uma única coluna de valores — o caso mais comum de todos — não existe pintar uma categoria de vermelho e outra de azul. Só dá para acender/apagar via highlight, sempre com a mesma cor. No Datawrapper, escolher a cor de uma categoria específica é um clique.",
+  "proposal": "Quando `model.series.length === 1` (ou o gráfico for de composição — donut, waffle, treemap, onde a leitura já é por categoria), trocar a lista do painel de séries para categorias e fazer `markColor` consultar `spec.color.overrides[categoryLabels[index]]` antes de cair no `series.color`. Não exige campo novo no spec: as chaves de `overrides` já são strings livres (`Record<string, string>`, types.ts:145) e o mesmo booleano `byCategory` que o AnnotateStep já calcula para o destaque (AnnotateStep.tsx:52-53) decide qual lista mostrar.",
+  "files": [
+   "src/core/model.ts",
+   "src/core/render/context.ts",
+   "src/ui/steps/AnnotateStep.tsx"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "context.ts:77-79 — `return highlighted.includes(...) ? series.color : ctx.theme.mutedSeries`: a cor da marca nunca depende da categoria, só do estado de destaque."
+ },
+ {
+  "id": "ocultar-linhas-sem-ui",
+  "title": "hiddenRows funciona no engine e não tem interface",
+  "dimension": "funcionalidade",
+  "problem": "`transform.hiddenRows` (src/core/types.ts:59) é honrado por `deriveDataset` (src/core/dataset/transform.ts:73 e 85) e validado no schema (src/core/schema.ts:31), mas nenhuma tela escreve nele — a única menção na UI é o reset ao carregar dados novos (src/ui/steps/DataStep.tsx:47). Na grade, a única forma de tirar uma linha do gráfico é `removeRow` (src/ui/DataGrid.tsx:143-146), que apaga o dado de verdade e está escondida atrás de um duplo clique no número da linha (DataGrid.tsx:249). Colunas têm o olho de ocultar, com o cuidado de sair do encoding (DataGrid.tsx:103-113 e 196-201); linhas não têm equivalente. Também não há filtro por valor: tirar as três linhas de 'Total' de uma tabela exportada de um ERP exige voltar ao Excel.",
+  "proposal": "Espelhar o controle de coluna na coluna de índice da grade: um botão de ocultar por linha que escreve `transform.hiddenRows`, com a linha ganhando o mesmo estilo `col-hidden` que já existe, e um contador 'N linhas ocultas — mostrar todas'. Trocar o duplo clique destrutivo por um botão × explícito, alinhado ao × que a coluna já tem. Em seguida, um filtro simples ('coluna contém / é maior que / é igual a') que resolva o caso das linhas de total sem edição manual.",
+  "files": [
+   "src/ui/DataGrid.tsx",
+   "src/ui/steps/DataStep.tsx",
+   "src/ui/styles.css"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "transform.ts:85 `if (hiddenRows.has(rowIndex)) return` — filtro pronto e testado, alimentado por um array que a interface nunca preenche."
+ },
+ {
+  "id": "coluna-calculada-ausente",
+  "title": "Nenhuma coluna calculada: % e variação vão pro Excel",
+  "dimension": "funcionalidade",
+  "problem": "O `TransformSpec` tem exatamente seis campos — transpose, sortBy, sortDirection, limit, hiddenColumns, hiddenRows (src/core/types.ts:51-60) — e nenhum deles cria coluna. Os cálculos que mais aparecem num gráfico editorial (participação no total, variação percentual entre duas colunas, diferença absoluta, per capita) não têm caminho na ferramenta. A grade oferece `addColumn` (src/ui/DataGrid.tsx:137-141), que só empurra um cabeçalho e células vazias para digitar à mão. Na prática o usuário abre a planilha, calcula, cola de novo — e perde as anotações se recarregar a tabela pelo caminho de `ingest` (DataStep.tsx:41-48, que reseta encoding e highlight).",
+  "proposal": "Campo `computed: Array<{ name: string; kind: 'share'|'delta'|'pctChange'|'ratio'; a: string; b?: string }>` no TransformSpec, avaliado em `deriveDataset` depois da coerção de tipos e antes de ordenar (para que ordenar pela coluna nova funcione de graça). Na etapa Dados, um botão '+ coluna calculada' com essas quatro receitas nomeadas em português ('% do total', 'variação %', 'diferença', 'razão') e dois Selects de coluna — sem parser de expressão, que é onde esse tipo de recurso costuma virar um projeto paralelo.",
+  "files": [
+   "src/core/types.ts",
+   "src/core/schema.ts",
+   "src/core/dataset/transform.ts",
+   "src/ui/steps/DataStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "DataGrid.tsx:139 `draft.data.header.push(\\`Coluna ${draft.data.header.length + 1}\\`)` seguido de `row.push('')` — a única criação de coluna do sistema é uma coluna vazia."
+ },
+ {
+  "id": "controles-orfaos-eixo-e-paleta",
+  "title": "Três ajustes prontos no engine sem botão na interface",
+  "dimension": "ux",
+  "problem": "Três campos do ChartSpec estão implementados, validados e salvos no arquivo, e não têm nenhum controle: `axes.y.ticks` controla a densidade de marcas do eixo de valores (usado em src/core/frame.ts:260, sobrepondo o `pickTickCount` automático); `axes.y.visible` esconde a régua de valores (src/core/frame.ts:276); `color.reverse` inverte a paleta (src/core/model.ts:117). O ChartStep expõe grade e rótulos de categoria (src/ui/steps/ChartStep.tsx:462-479) mas não a visibilidade do eixo de valores, e o grupo Tema expõe apenas `color.kind` (ChartStep.tsx:517-532). Quem abre um .json salvo por outra pessoa com esses campos alterados não tem como reverter pela interface.",
+  "proposal": "Três controles de uma linha cada, sem tocar no engine: Toggle 'Mostrar eixo de valores' ao lado de 'Mostrar grade'; NumberInput 'Quantidade de marcas no eixo' com placeholder 'automático' (o campo já é `number | null`); Toggle 'Inverter paleta' logo abaixo do Segmented de tipo de paleta. É a melhor relação esforço/resultado do relatório inteiro.",
+  "files": [
+   "src/ui/steps/ChartStep.tsx"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "frame.ts:260 `spec.axes.y.ticks ?? pickTickCount(valueAxisPixels)` — o override existe e nunca é escrito; idem model.ts:117 `if (spec.color.reverse) base = [...base].reverse()`."
+ },
+ {
+  "id": "sem-small-multiples-nem-eixo-secundario",
+  "title": "Sem small multiples, faceta ou segundo eixo de valores",
+  "dimension": "engine",
+  "problem": "O ChartSpec tem um único par de eixos (`axes: { x: AxisSpec; y: AxisSpec }`, src/core/types.ts:295) e nenhuma noção de faceta — `grep -rniE 'facet|small.?multipl|secondary|dual'` em src/ não retorna nada além de um comentário sobre cor de texto secundário. A `Scene` também é única: um `plot`, uma lista de séries, uma de categorias (src/core/types.ts:410-420). Duas variáveis em unidades diferentes (receita em milhões e margem em %) só podem ser desenhadas na mesma escala, o que produz uma linha colada no eixo; e comparar 12 regiões lado a lado exige montar 12 gráficos separados, cada um com seu próprio título e fonte.",
+  "proposal": "Começar pelas small multiples, que não exigem eixo duplo e cabem na arquitetura atual: campo `facet: { by: string | null; columns: number; sharedScale: boolean }`, e um `renderChart` que particiona as linhas por valor da coluna e chama `buildFrame` + `definition.draw` uma vez por painel dentro de uma grade — a assinatura `draw(ctx)` já recebe o frame de fora (src/core/render/context.ts:15-21), então nenhum renderizador precisa mudar. Escala compartilhada por padrão, que é o que torna a comparação honesta. O eixo secundário vem depois, como `axes.y2` opcional + `encoding.y2: string[]`, restrito a linha e barra e com um aviso do linter sobre o risco de correlação espúria.",
+  "files": [
+   "src/core/types.ts",
+   "src/core/render/index.ts",
+   "src/core/frame.ts",
+   "src/ui/steps/ChartStep.tsx",
+   "src/core/schema.ts"
+  ],
+  "impact": "alto",
+  "effort": "alto",
+  "evidence": "render/index.ts:138-151 — `buildFrame` é chamado exatamente uma vez por render, com a largura inteira da cena; toda a montagem assume um painel só."
+ },
+ {
+  "id": "fonte-sem-link-e-embed-sem-dados",
+  "title": "sourceUrl é campo morto e o embed não dá os dados",
+  "dimension": "export",
+  "problem": "`text.sourceUrl` existe no spec (src/core/types.ts:272), no schema (src/core/schema.ts:201) e nos exemplos (src/examples/samples.ts:89), e não é lido por ninguém: o rodapé é montado só com `text.source` e `text.note` (src/core/frame.ts:190-192), sem `<a>` nem no SVG nem no embed. Também não há como o leitor chegar à tabela: `buildEmbedHtml` despeja apenas o SVG num contêiner (src/core/export/index.ts:116-142) e a etapa Publicar oferece PNG, SVG, HTML e o .json do projeto (src/ui/steps/PublishStep.tsx:96-168) — nenhum CSV. O 'Get the data' embaixo de todo gráfico do Datawrapper é parte do contrato editorial de verificabilidade que esta ferramenta diz defender no comentário do AnnotateStep (src/ui/steps/AnnotateStep.tsx:1-9).",
+  "proposal": "Campo 'Link da fonte' ao lado de 'Fonte' no grupo Rodapé do AnnotateStep, gravando em `text.sourceUrl`; no `sceneToSvg` e no embed, envolver o nó de rodapé com handle 'source' num `<a>` quando houver URL. No embed, uma linha discreta abaixo do gráfico com 'Fonte: X · Baixar os dados', com o CSV embutido como `data:` URI — `spec.data.header` e `spec.data.rows` já são texto cru, é serialização direta. E um botão 'Baixar CSV' na etapa Publicar, ao lado do SVG.",
+  "files": [
+   "src/ui/steps/AnnotateStep.tsx",
+   "src/core/frame.ts",
+   "src/core/export/index.ts",
+   "src/core/export/svg.ts",
+   "src/ui/steps/PublishStep.tsx"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "frame.ts:191 `if (spec.text.source) footerParts.push(\\`Fonte: ${spec.text.source}\\`)` — `sourceUrl` não aparece em nenhuma linha de frame.ts, svg.ts ou export/index.ts."
+ },
+ {
+  "id": "eixo-tempo-rotulos-duplicados",
+  "title": "Eixo de tempo repete o mesmo rótulo em ticks seguidos",
+  "dimension": "engine",
+  "problem": "Em `src/core/frame.ts:364` o padrão de data é escolhido UMA vez, a partir da amplitude total do domínio (`autoDatePattern(domain[1] - domain[0])`, definido em `src/core/format.ts:193-200`), e depois aplicado a todos os ticks que o d3 gerar em `src/core/frame.ts:368-374`. Só que quem decide o INTERVALO dos ticks é `scale.ticks(count)`, e ele não conhece esse padrão. Com uma série de 2020 a 2024 (span > 1095 dias → padrão `%Y`) o d3 devolveu 16 ticks trimestrais e o eixo saiu literalmente assim: 2020, 2020, 2020, 2020, 2021, 2021, 2021, 2021, 2022... Quatro rótulos idênticos em sequência. Nenhum gráfico de FT/Reuters sai com isso; é o tipo de erro que desqualifica a ferramenta inteira à primeira vista, e ele acontece no caso mais comum de todos (linha temporal de alguns anos).",
+  "proposal": "Derivar o padrão do PASSO entre ticks, não da amplitude: gerar os ticks primeiro, medir `ticks[1] - ticks[0]`, e só então escolher o formato (passo anual → `%Y`; mensal → `%b/%y`; diário → `%d/%b`). Melhor ainda, adotar a convenção editorial de eixo temporal em dois níveis: rótulo curto no tick (`jan`, `abr`, `jul`, `out`) e o ano impresso só quando muda (primeiro tick e cada virada de ano), como FT e NYT fazem. Alternativa mínima e barata: depois de formatar, deduplicar rótulos consecutivos iguais deixando só o primeiro de cada bloco — mas isso é remendo; a correção certa é o passo governar o padrão. Vale também expor `autoDatePattern` recebendo `stepMs` em vez de `spanMs`.",
+  "files": [
+   "src/core/frame.ts",
+   "src/core/format.ts"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "frame.ts:364 `const pattern = autoDatePattern(domain[1] - domain[0])` seguido de frame.ts:368 `for (const date of scale.ticks(count))`. Probe com CSV de 2020-01-01 a 2024-01-01 em `line`, 620x420: TICKS TEMPO = [\"2020\",\"2020\",\"2020\",\"2020\",\"2021\",\"2021\",\"2021\",\"2021\",\"2022\",\"2022\",\"2022\",\"2022\",\"2023\",\"2023\",\"2023\",\"2023\"]"
+ },
+ {
+  "id": "linha-lacunas-alternadas-invisivel",
+  "title": "Série com lacunas alternadas não desenha nada",
+  "dimension": "robustez",
+  "problem": "`src/core/render/cartesian.ts:157-163` usa `d3Line().defined(p => p.defined)`, o que é correto para não interpolar buracos. Mas quando os pontos definidos não são vizinhos — série tipo [10, null, 25, null, 40], que é o padrão de dado anual/censitário incompleto — cada subcaminho tem UM ponto só, e um subcaminho de um ponto não renderiza nada em SVG. O guarda existente em cartesian.ts:189 (`const singleton = defined.length === 1`) só cobre a série que tem um único ponto no total, não a série com vários pontos todos isolados. Como `showPoints` vem desligado por padrão (`src/core/schema.ts:38`), o resultado é um gráfico em branco: grade, eixos, título e rodapé desenhados, e zero tinta de dado. Pior que errado, é silencioso — o usuário conclui que a ferramenta quebrou.",
+  "proposal": "Em `drawLines`, detectar segmentos de comprimento 1 e desenhar um ponto para cada um, independente de `showPoints`: percorrer `points`, marcar os índices `defined` cujos vizinhos imediatos são `null` (ou bordas), e emitir um `circle` de raio `max(pointRadius, strokeWidth)` na cor da série. É a convenção padrão (Datawrapper e Highcharts fazem exatamente isso). Complementar com uma regra no linter: quando mais de 30% dos pontos de uma série forem isolados, sugerir barras ou ligar os marcadores. Fazer o mesmo para `area`, onde o buraco também produz faixa vazia sem qualquer sinal.",
+  "files": [
+   "src/core/render/cartesian.ts",
+   "src/advisor/lint.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "Probe com `Ano;Valor` = 2015;10 / 2016;(vazio) / 2017;25 / 2018;(vazio) / 2019;40 em `line`: PATHS LINHA = [\"M115.147,428.16ZM372.213,260.44ZM629.279,92.72Z\"] — três `moveTo`+`close`, nenhum `lineTo` — e CIRCULOS VISIVEIS = 0."
+ },
+ {
+  "id": "cabecalho-esmaga-painel-mobile",
+  "title": "Cabeçalho fixo esmaga o painel em largura mobile",
+  "dimension": "design",
+  "problem": "Título e subtítulo usam tamanho fixo do tema (`theme.titleSize` 21px, `subtitleSize` 14px) e quebram em `contentWidth = width - 52` (`src/core/frame.ts:121-134`). Nada disso escala com a largura. Em 340px de largura um título editorial real de 62 caracteres vira 4 linhas e o subtítulo vira 3; `headerBottom` (frame.ts:186) desce até engolir o espaço inteiro e `plot.height` cai no piso de segurança `Math.max(20, bottom - top)` (frame.ts:301-306). Medido: com título e subtítulo plausíveis, em 340x231 o painel ficou com 20px de altura — 9% da imagem. Em 380x258, idem. O preset 'Mobile 380' de `src/ui/App.tsx:36` mostra exatamente esse resultado, então a ferramenta oferece um botão que exibe um gráfico destruído. Não há degradação: o painel não encolhe proporcionalmente, ele colapsa.",
+  "proposal": "Três medidas juntas. (1) Escala tipográfica responsiva no `buildFrame`: fator `clamp(0.8, width/620, 1.15)` aplicado a titleSize/subtitleSize/labelSize, com pisos (título nunca abaixo de 15px, rótulo nunca abaixo de 10px) — é o que FT faz no breakpoint móvel. (2) Orçamento de cabeçalho: o header nunca pode passar de ~38% da altura; se passar, reduzir o tamanho do título em um passo e reprocessar o `wrapText`, e truncar o subtítulo com reticências antes de deixá-lo comer o painel. (3) Substituir o piso mudo `Math.max(20, ...)` por um piso significativo (ex.: 120px) e, quando ele for atingido, emitir um aviso do linter dizendo que o texto não cabe nessa proporção. Sem isso, qualquer embed em coluna estreita de artigo sai quebrado.",
+  "files": [
+   "src/core/frame.ts",
+   "src/core/theme/themes.ts",
+   "src/ui/App.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "Probe `line` com título \"Cobertura vacinal volta ao patamar de 2015 em todas as regiões\" + subtítulo + fonte + crédito: W=340 H=231 → plot={\"x\":50.88,\"y\":191.12,\"width\":220.17,\"height\":20}, razão painel/altura = 0.09. W=380 H=258 → height 20. W=620 H=422 → height 194.72 (0.46)."
+ },
+ {
+  "id": "unidade-eixo-vaza-margem",
+  "title": "Unidade do eixo vaza da margem e repete em cada tick",
+  "dimension": "design",
+  "problem": "Dois problemas no mesmo ponto. (1) A margem esquerda é calculada em `src/core/frame.ts:265-268` sobre `tickLabels` SEM a unidade, mas o texto desenhado em frame.ts:425 é `tick.label + spec.axes.y.unit` no tick do topo. Com `unit = ' milhões de reais'`, o rótulo do topo saiu como \"300 mil milhões de reais\" ancorado em `end` no x=70 — ou seja, começando em x ≈ -80, fora do canvas, cortado. A unidade no topo é a convenção certa (FT/Reuters), mas a medição não a acompanha. (2) `autoNumberFormatter` (`src/core/format.ts:215`) manda todo tick acima de 10.000 para `abbreviate`, então o sufixo se repete em TODOS os ticks: \"50 mil\", \"100 mil\", \"150 mil\"... A convenção editorial é o contrário: escala uma vez (no topo, ou no subtítulo/título de eixo) e números limpos no resto.",
+  "proposal": "Medir o rótulo mais largo já com a unidade concatenada antes de calcular `left` (e antes de calcular `bottom` na orientação horizontal). Para a repetição: extrair o sufixo comum dos ticks abreviados e imprimi-lo uma única vez, no tick do topo, deixando os demais como \"50\", \"100\", \"150\" — e, quando `axes.y.title` estiver vazio, oferecer preencher automaticamente com a escala (\"em milhares de R$\"), que é onde o leitor de jornal espera encontrá-la. Bônus barato no mesmo commit: hoje o `unit` só sai no último item do array (frame.ts:425), o que na orientação horizontal é o tick mais à direita — confirmar que é o desejado ou parametrizar.",
+  "files": [
+   "src/core/frame.ts",
+   "src/core/format.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "Probe `bar` com valores 120000/340000 e `axes.y.unit=' milhões de reais'`: TICKS Y = [[\"0\",70],[\"50 mil\",70],[\"100 mil\",70],[\"150 mil\",70],[\"200 mil\",70],[\"250 mil\",70],[\"300 mil milhões de reais\",70]], todos ancorados em `end` no x=70, plot.x=79.68."
+ },
+ {
+  "id": "rarefacao-cola-ultimo-rotulo",
+  "title": "Rarefação de rótulos cola o último no penúltimo",
+  "dimension": "design",
+  "problem": "`src/core/frame.ts:342-345` rareia os rótulos de categoria pelo passo calculado em `thinningStep` (frame.ts:83-94), mas força a inclusão do último com `|| i !== model.categories.length - 1`. Quando `(n-1)` não é múltiplo do passo, o último rótulo cai colado no penúltimo mantido e a colisão é garantida — justamente o problema que a função inteira existe para evitar. Medido com 11 categorias de nome longo em 620px: os mantidos foram os índices 0, 4, 8 e 10, nas posições x = 76, 273, 471 e 569. Entre 471 e 569 há 98px de folga para rótulos de ~130px de largura: sobreposição de mais de 30px. O cabeçalho do arquivo (frame.ts:12-14) promete que \"se não cabem, são rareados\", e essa exceção quebra a promessa exatamente no ponto mais visível do eixo, a ponta direita.",
+  "proposal": "Manter a intenção (o último rótulo é informativo) sem a colisão: depois de montar `categoryTicks`, verificar se a distância entre o último e o penúltimo é menor que a largura medida dos dois textos + folga; se for, descartar o PENÚLTIMO em vez de empilhar os dois. Alternativa mais robusta e igualmente barata: montar a lista de trás para frente, ancorando no último índice e caminhando com o passo (0, 2, 4, ... a partir do fim), o que faz o primeiro e o último sempre caberem por construção. Vale também trocar a heurística de `thinningStep` — que compara a largura do rótulo MAIS LARGO contra a média disponível — por uma varredura de colisão par a par, que preserva mais rótulos quando só um nome é comprido.",
+  "files": [
+   "src/core/frame.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "frame.ts:343 `if (i % step !== 0 && i !== model.categories.length - 1) return`. Probe com 11 categorias \"Categoria bem comprida N\" em `bar` 620x420: TICKS CAT = [[\"...0\",76],[\"...4\",273],[\"...8\",471],[\"...10\",569]]."
+ },
+ {
+  "id": "legenda-sobre-titulo-eixo",
+  "title": "Legenda e título do eixo Y dividem a mesma faixa",
+  "dimension": "design",
+  "problem": "Quando existem legenda no topo e título do eixo Y ao mesmo tempo, os dois são desenhados um por cima do outro. `src/core/frame.ts:296-299` reserva altura para os dois (`top += labelSize * LINE_HEIGHT` para o título e `top += reserveTop` para a legenda), mas na hora de desenhar cada um recebe uma âncora que ignora a existência do outro: o título do eixo vai para `plot.y - 10` (frame.ts:509-520) e a legenda vai para `frame.plot.y - legendHeight` (`src/core/render/index.ts:158-167`), que é a mesma faixa vertical. Medido em `bar` com 3 séries e `axes.y.title = 'em % do PIB'`: os itens de legenda A/B/C ficaram em y=121 (x=58, 90, 121) e o título do eixo em y=124 começando em x=26 com ~65px de largura — ele passa por baixo do quadradinho e do rótulo \"A\". O título do eixo é justamente onde a unidade deveria morar (ver achado da unidade), então os dois recursos editoriais se anulam.",
+  "proposal": "Empilhar em vez de sobrepor: reservar as duas alturas em sequência e passar a coordenada do título do eixo explicitamente, `plot.y - legendHeight - labelSize*0.4` quando houver legenda, ou `plot.y - 10` quando não houver. Como o título do eixo é curto e a legenda é fluida, a alternativa melhor é colocar o título do eixo na PRIMEIRA linha (colado ao subtítulo, alinhado à esquerda no `PADDING`) e a legenda logo abaixo dele — que é a ordem de leitura usada em FT/Economist. Enquanto isso não for feito, ao menos deslocar um dos dois evita o sobreposto grosseiro.",
+  "files": [
+   "src/core/frame.ts",
+   "src/core/render/index.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "Probe `bar` com y=['A','B','C'] e axes.y.title='em % do PIB' em 760x?: TEXTOS TOPO = [[\"T\",26,62],[\"A\",58,121],[\"B\",90,121],[\"C\",121,121],[\"6\",33,134],[\"em % do PIB\",26,124]] — legenda em y=121 e título de eixo em y=124."
+ },
+ {
+  "id": "sem-numerais-tabulares",
+  "title": "Sem numerais tabulares nem tracking na cena",
+  "dimension": "design",
+  "problem": "Todo número da cena — rótulos do eixo alinhados à direita (frame.ts:426-437), rótulos de valor sobre as marcas (`src/core/annotate/directLabels.ts:146-196`), delta do haltere (`src/core/render/comparison.ts:80-91`), total no centro da rosca (`src/core/render/partition.ts:170-183`) — é desenhado com numerais proporcionais. Em pilhas como Segoe UI e Helvetica o \"1\" é bem mais estreito que o \"0\", então uma coluna de ticks alinhada à direita fica com os dígitos desalinhados verticalmente e a vírgula decimal serrilhada, e um rótulo que muda de 1.111 para 8.888 na animação/hover muda de largura. É a diferença de acabamento mais imediatamente perceptível entre um gráfico de biblioteca e uma página de FT. O curioso é que a infraestrutura já existe e está morta: `TextNode.letterSpacing` está declarado em `src/core/types.ts:384`, é serializado em `src/core/export/svg.ts:114` e repassado em `src/ui/Canvas.tsx:152` — e nenhum renderizador jamais o define. E `font-variant-numeric: tabular-nums` aparece 4 vezes em `src/ui/styles.css` (linhas 312, 613, 685, 910), ou seja, para a interface do editor, mas nunca para o gráfico que será publicado.",
+  "proposal": "Acrescentar `numeric?: boolean` (ou `fontVariant?: 'tabular-nums'`) ao `TextNode`, emitir `font-variant-numeric=\"tabular-nums\"` em `nodeToSvg` e no `Canvas`, e ligá-lo em todo texto que é número: ticks de valor, ticks numéricos de categoria, rótulos de valor, delta do haltere, total da rosca, percentuais de waffle/treemap. Aproveitar a viagem para usar o `letterSpacing` que já está pronto: tracking levemente negativo (-0.01em) no título em corpo grande e positivo (+0.02em) nos rótulos de eixo em 10-12px, que é a compensação óptica padrão de tipografia editorial. Como o export usa fontes de sistema (decisão documentada em themes.ts:1-10), `tabular-nums` é suportado sem custo de rede.",
+  "files": [
+   "src/core/types.ts",
+   "src/core/export/svg.ts",
+   "src/ui/Canvas.tsx",
+   "src/core/frame.ts",
+   "src/core/annotate/directLabels.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "grep por `letterSpacing` em src/: só a declaração (types.ts:384), a serialização (svg.ts:114) e o repasse (Canvas.tsx:152) — zero usos. grep por `tabular` em src/: só styles.css:312, 613, 685, 910, todas regras da UI, nenhuma da cena."
+ },
+ {
+  "id": "rotulo-direto-sem-ultimo-valor",
+  "title": "Rótulo direto não traz o último valor da série",
+  "dimension": "funcionalidade",
+  "problem": "`src/core/annotate/directLabels.ts:97` escreve apenas `truncate(entry.series.name, MAX_CHARS)` na ponta da linha. O nome resolve \"qual linha é essa\", mas deixa aberta a pergunta que o leitor faz em seguida e que a convenção editorial responde no mesmo lugar: \"e quanto é hoje?\". Em FT, Reuters e NYT o rótulo de ponta é sempre nome + valor final, quase sempre com um ponto marcando a última observação — é o \"marcador de último valor\". Hoje, para saber o número final o leitor precisa ligar `valueLabels`, que imprime o valor de TODOS os pontos (cartesian.ts:237-256) e polui a linha inteira, ou passar o mouse (o que não existe no PNG exportado nem no impresso). O ponto do último valor também não é desenhado: com `showPoints` desligado e densidade alta, a linha simplesmente termina no ar.",
+  "proposal": "Acrescentar `lastValueLabel: boolean` (ligado por padrão em linha e área) ao `LabelSpec`. Em `renderDirectLabels`, compor o texto como `${nome}  ${frame.formatDatum(valor)}` — com o valor em peso maior que o nome, se quisermos ir ao acabamento completo, emitindo dois `TextNode` adjacentes — e emitir um `circle` da cor da série no último ponto definido (o índice já é calculado por `lastDefined`, directLabels.ts:35-40). A largura reservada em `measureDirectLabels` (directLabels.ts:43-55) precisa passar a medir o texto composto, senão o rótulo estoura à direita. Como o anticolisão (collision.ts) já roda em cima desses slots, a mudança é quase toda de composição de string e medição.",
+  "files": [
+   "src/core/annotate/directLabels.ts",
+   "src/core/types.ts",
+   "src/core/schema.ts",
+   "src/ui/steps/AnnotateStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "directLabels.ts:97 `const text = truncate(entry.series.name, MAX_CHARS)` — o valor nunca entra. O `frame.formatDatum` já está disponível no contexto e é usado por todos os outros rotuladores."
+ },
+ {
+  "id": "sem-projecao-incerteza-multiplos",
+  "title": "Faltam projeção tracejada, incerteza e pequenos múltiplos",
+  "dimension": "funcionalidade",
+  "problem": "Três recursos clássicos de gráfico de redação não têm nenhuma representação no `ChartSpec`. (1) Projeção: `LineAnnotation` (types.ts:207-215) desenha uma linha de referência reta atravessando o painel, e `PathNode.dash` existe (types.ts:342), mas não há como dizer \"desta categoria em diante a série é previsão\" — o trecho projetado sai sólido, indistinguível do observado, que é um erro editorial sério, não estético. (2) Faixa de incerteza: `RangeAnnotation` sombreia um intervalo de UM eixo (annotations.ts:94-152), não a área entre duas séries; não existe forma de desenhar intervalo de confiança, banda de erro ou cenário mín/máx. (3) Pequenos múltiplos: `renderChart` monta um painel único (`src/core/render/index.ts:105-191`) e não há grade de painéis — e o próprio linter recomenda ao usuário, em `src/advisor/lint.ts:185`, \"Considere linhas ou pequenos múltiplos\" para empilhamento com muitas séries, ou seja, a ferramenta aconselha algo que ela não sabe fazer.",
+  "proposal": "Atacar em ordem de custo/benefício. (1) Projeção primeiro, é barata: `chart.options.forecastFrom: string | null` (rótulo da categoria); em `drawLines`, partir os pontos em dois geradores — sólido até o índice, tracejado (`dash: '6 4'`) a partir dele, com um marcador discreto na emenda; e regra no linter avisando quando houver projeção sem menção no rodapé. (2) Faixa de incerteza como um tipo de série derivado: `encoding.bandLow`/`bandHigh` apontando duas colunas, desenhadas como `d3Area` com `fillOpacity` baixa na cor da série, ATRÁS da linha — reaproveita quase tudo que já existe em drawLines. (3) Pequenos múltiplos como `layout.facetBy: string | null`, com `renderChart` chamando `buildFrame` numa grade de sub-retângulos e compartilhando domínio e eixos entre os painéis; é o item caro, mas é o que fecha o buraco que o próprio linter aponta.",
+  "files": [
+   "src/core/types.ts",
+   "src/core/schema.ts",
+   "src/core/render/cartesian.ts",
+   "src/core/render/index.ts",
+   "src/advisor/lint.ts"
+  ],
+  "impact": "alto",
+  "effort": "alto",
+  "evidence": "Nenhuma ocorrência de forecast/projeção/banda no núcleo: `dash` só aparece em annotations.ts:165 (linha de referência) e nos tipos. lint.ts:185 diz \"Considere linhas ou pequenos múltiplos\" e `renderChart` (render/index.ts:105) sempre devolve uma única `Scene` com um único `plot`."
+ },
+ {
+  "id": "histograma-com-folga-entre-barras",
+  "title": "Histograma sai com folga de barras entre as faixas",
+  "dimension": "design",
+  "problem": "O histograma usa a mesma escala de faixas dos gráficos de barras (`categoryKind: () => 'band'`, distribution.ts:306) e desenha `w: Math.max(1, frame.band)` (distribution.ts:105), com a `band` já descontada do `barPadding` de 0.22 aplicado em frame.ts:331. Resultado medido: barras de 141px com passo de 181px, ou seja, 40px de vão entre faixas contíguas. Um histograma com vão lê-se como gráfico de barras categórico — some a noção de continuidade da variável, que é a única coisa que o histograma tem para dizer. Junto disso, os rótulos do eixo são um por faixa, no formato \"30–43\", \"43–57\", centralizados na barra e sujeitos à rarefação; a convenção é o eixo contínuo com ticks nas BORDAS das faixas (30, 40, 50, 60), lidos como uma régua numérica. E o valor da borda repetido em dois rótulos vizinhos (\"30–43\" seguido de \"43–57\") ainda deixa ambígua a regra de inclusão do limite.",
+  "proposal": "No `histogramModel`/`drawHistogram`, forçar padding zero: ou sobrescrever `barPadding` para o tipo `histogram` no `buildFrame`, ou desenhar com largura `band / (1 - barPadding)` e deixar 1px de filete da cor do fundo entre as barras — que é a mesma técnica já usada nas barras empilhadas (cartesian.ts:55-56) e mantém a leitura de continuidade. Para o eixo, trocar o rótulo por faixa por ticks nas bordas: o modelo já guarda `extra: { binWidth, min, max }` (distribution.ts:82), então dá para emitir um `categoryKind: 'linear'` com domínio [min, max] e ticks redondos, sem nenhuma gambiarra. Ganho extra: o eixo passa a poder receber `axes.x.title` com a unidade da variável, que hoje não tem onde caber.",
+  "files": [
+   "src/core/render/distribution.ts",
+   "src/core/frame.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "Probe com 40 valores em `histogram` 620x420: HIST barras = [[71,141],[252,141],[433,141]] — passo 181, largura 141, vão de 40px. HIST rótulos = [\"30–43\",\"43–57\",\"57–70\"], com o valor de borda repetido em rótulos vizinhos."
+ },
+ {
+  "id": "rosca-fatias-pequenas-sem-rotulo",
+  "title": "Fatias abaixo de 3% da rosca ficam sem identificação",
+  "dimension": "design",
+  "problem": "Em `src/core/render/partition.ts:122-123`, `if (slice.share < 0.03) continue` acontece ANTES tanto do rótulo interno de porcentagem quanto do rótulo externo com o nome da categoria (partition.ts:150-163). O comentário diz \"fatias muito finas não comportam rótulo legível\", o que é verdade para o rótulo INTERNO, mas o externo mora fora do arco e caberia. Resultado medido com A=80, B=12, C=5, D=2, E=1: a rosca desenhou cinco arcos coloridos e só três textos (A, B, C) — as fatias D e E ficaram como duas fitas de cor anônimas, impossíveis de identificar em PNG ou impresso. Como `bare: true` (partition.ts:390) e a legenda é suprimida para gráficos bare em `render/index.ts:126`, não existe nenhum outro lugar no gráfico onde esses nomes apareçam. O linter avisa sobre rosca com mais de 4 fatias (lint.ts:147-156), mas o problema aqui não é o número de fatias, é a fatia pequena — que aparece mesmo com poucas categorias.",
+  "proposal": "Separar os dois limiares: manter o corte em 3% (ou subi-lo para o teste real de caber) apenas para o rótulo interno, e sempre desenhar o rótulo externo. Para as fatias finas que se acumulam num mesmo setor, aplicar o anticolisão vertical que já existe (`resolveVerticalCollisions` em annotate/collision.ts, já usado pelo `slope`) nos rótulos externos de cada lado, com uma linha de chamada (leader line) curta ligando o rótulo deslocado ao arco — é a solução padrão e o projeto já tem a peça pronta. Quando ainda assim não couber, agrupar o resíduo numa fatia \"Outros (n)\" com o total, em vez de deixar cor sem nome.",
+  "files": [
+   "src/core/render/partition.ts",
+   "src/core/annotate/collision.ts"
+  ],
+  "impact": "medio",
+  "effort": "medio",
+  "evidence": "partition.ts:122-123 `if (slice.share < 0.03) continue` posicionado antes do bloco de rótulo externo (linhas 150-163). Probe `donut` com A=80,B=12,C=5,D=2,E=1 em 620x420: DONUT textos = [[\"A\",417,355],[\"B\",171,101],[\"C\",247,48],[\"100\",310,211],[\"total\",310,229]] — nada para D e E."
+ },
+ {
+  "id": "bala-rotulo-branco-fixo",
+  "title": "Rótulo do gráfico bala usa branco fixo",
+  "dimension": "acessibilidade",
+  "problem": "`src/core/render/comparison.ts:349` escreve `fill: fits ? '#ffffff' : theme.foreground` para o rótulo de valor impresso dentro da barra do gráfico bala. O branco é chutado, não verificado. O projeto tem exatamente a função para isso — `readableOn` em `src/core/annotate/directLabels.ts:199-203`, que testa 3:1 e cai para preto ou para o fundo — e ela é usada por todos os outros rotuladores internos: `valueLabelNode` (directLabels.ts:176 e 189), a rosca e o treemap (partition.ts:63-67). O bala é a exceção. Basta a série cair numa cor clara da paleta para o número sumir: no tema Noturno a primeira cor é `#5AA9F0` e a quinta é `#E8C35A` (palettes.ts:82-90), e no tema Impresso a quinta é `#B58900` (palettes.ts:59) — branco sobre qualquer uma delas fica bem abaixo de 3:1. Como o bala é o gráfico de painel/meta, ele é justamente o que mais recebe cor customizada via `color.overrides`.",
+  "proposal": "Trocar por `fill: fits ? readableOn(measure.color, theme.background) : theme.foreground`, exportando `readableOn` de `annotate/directLabels.ts` (ou promovendo-a para `theme/contrast.ts`, onde já moram `contrastRatio` e `checkContrast` e onde ela deveria estar desde o começo — hoje existem duas cópias, uma em directLabels.ts:199 com limiar 3 e outra em partition.ts:63 com limiar 3.2). Unificar as duas num único helper com limiar declarado elimina a divergência silenciosa e fecha o caso.",
+  "files": [
+   "src/core/render/comparison.ts",
+   "src/core/annotate/directLabels.ts",
+   "src/core/theme/contrast.ts",
+   "src/core/render/partition.ts"
+  ],
+  "impact": "baixo",
+  "effort": "baixo",
+  "evidence": "comparison.ts:349 `fill: fits ? '#ffffff' : theme.foreground`, contra directLabels.ts:176 `fill: inside ? readableOn(color, options.background) : color`. Duas cópias divergentes de `readableOn`: directLabels.ts:199 (limiar 3) e partition.ts:63 (limiar 3.2)."
+ },
+ {
+  "id": "colunas-duplicadas-colapsam",
+  "title": "Coluna renomeada com nome repetido apaga a outra",
+  "dimension": "robustez",
+  "problem": "`deriveDataset` monta cada linha como `record[column.name] = ...` (src/core/dataset/transform.ts:86-90). Se duas colunas tiverem o mesmo nome, a segunda sobrescreve a primeira e os dados dela somem do gráfico sem aviso. O parser protege contra isso com `uniqueHeader` (src/core/dataset/parse.ts:97-106), mas a grade não: `setHeader` (src/ui/DataGrid.tsx:67-94) escreve o texto digitado direto no cabeçalho, sem checar duplicata nem nome vazio. Provei com header ['Cat','V','V'] e linha ['a','10','99']: o dataset devolve `{Cat:'a', V:99}` — o 10 evaporou — e o modelo cria DUAS séries chamadas 'V', ambas desenhando 99. O mesmo `setHeader` também esquece de arrastar três referências no rename: `color.overrides` (a cor manual da série fica órfã), `encoding.label` e `highlight.categories` — ele cuida de x/y/series/size/target/sortBy/hiddenColumns mas não desses.",
+  "proposal": "Em `setHeader`, aplicar a mesma regra de `uniqueHeader` ao digitar: se o nome já existe em outra coluna (ou está vazio), sufixar com ' (2)' e mostrar um toast explicando. Completar o bloco de rename com `draft.color.overrides`, `draft.encoding.label`, `draft.highlight.categories` e as anotações de ponto (`a.series`). Como cinto de segurança, fazer `deriveDataset` desambiguar nomes repetidos antes de montar os registros, em vez de deixar um comer o outro.",
+  "files": [
+   "src/ui/DataGrid.tsx",
+   "src/core/dataset/transform.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "transform.ts:89 `record[column.name] = coerce(...)` sem checar colisão; DataGrid.tsx:71 `draft.data.header[columnIndex] = value` sem validação. Prova: deriveDataset({header:['Cat','V','V'], rows:[['a','10','99']]}) => rows [{\"Cat\":\"a\",\"V\":99}], columns com dois 'V'."
+ },
+ {
+  "id": "pivot-perde-linhas-duplicadas",
+  "title": "Formato longo com pares repetidos perde linhas",
+  "dimension": "engine",
+  "problem": "`pivotLongToWide` (src/core/dataset/transform.ts:175-181) percorre as linhas e faz `record[name] = value`. Quando duas linhas têm o mesmo par (x, série) — situação normalíssima em dado longo: duas vendas na mesma cidade no mesmo mês — a última simplesmente sobrescreve a anterior. Não soma, não avisa, não conta. Provei com [['2020','N','10'],['2020','N','25'],['2021','N','5']]: o pivot devolve `{Ano:2020, N:25}`. O usuário vê 25 onde o dado dele diz 35, e nada na tela sugere que 10 linhas foram descartadas. É o pior tipo de erro desta ferramenta: o gráfico fica bonito e mentiroso.",
+  "proposal": "Escolher explicitamente uma agregação em vez de deixar o acaso decidir. Mínimo viável: acumular (`record[name] = (record[name] ?? 0) + value`) e contar quantos pares colidiram; se colidiu, emitir uma regra de linter nova ('pivot-agregado') dizendo 'N linhas foram somadas porque repetem a mesma combinação de X e série'. O passo seguinte é expor um seletor de agregação (soma / média / máximo / última) na etapa Gráfico, ao lado do seletor de série.",
+  "files": [
+   "src/core/dataset/transform.ts",
+   "src/advisor/lint.ts",
+   "src/ui/steps/ChartStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "transform.ts:180 `record[name] = typeof value === 'number' ? value : null` — atribuição, não acumulação. Prova: pivotLongToWide sobre 2020/N=10 e 2020/N=25 devolve [{\"Ano\":2020,\"N\":25}]."
+ },
+ {
+  "id": "particao-descarta-negativos",
+  "title": "Rosca, waffle e treemap somem com negativos",
+  "dimension": "engine",
+  "problem": "`slicesOf` (src/core/render/partition.ts:48-51) calcula o total com `sum + Math.max(0, s.value)` e depois filtra `.filter(s => s.value > 0)`. Toda categoria negativa ou zerada desaparece do desenho E do denominador, sem uma linha de aviso. Provei com Lucro 80, Prejuízo -40, Outro 20: a cena sai com duas fatias (80 e 20) e as porcentagens são 80% e 20% — como se o prejuízo não existisse. Pior: `palette` é gerada para `model.categories.length` (linha 41) mas indexada pelo índice PÓS-filtro (`palette[i]`, linha 57), então as cores das fatias sobreviventes deslizam e deixam de bater com a legenda de outros gráficos do mesmo tema. E quando todos os valores são <= 0 o renderizador devolve `[]`, o que aciona o overlay de vazio do App com a mensagem errada ('Nenhuma coluna de valores no gráfico'), mandando o usuário procurar problema onde não tem. O linter (src/advisor/lint.ts) não tem nenhuma regra para isso.",
+  "proposal": "Manter o índice original da categoria dentro de `Slice` e usar `palette[slice.rowIndex]` para a cor não deslizar. Acrescentar regra no linter, severidade 'erro': quando `chart.type` é donut/waffle/treemap e existe valor <= 0 nas categorias, dizer 'N categorias com valor negativo ou zero foram omitidas — parte-do-todo só faz sentido com valores positivos; use barras'. Trocar o texto do overlay vazio para refletir o motivo real quando há série mapeada mas nenhuma marca desenhada.",
+  "files": [
+   "src/core/render/partition.ts",
+   "src/advisor/lint.ts",
+   "src/ui/App.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "partition.ts:48 `const total = raw.reduce((sum, s) => sum + Math.max(0, s.value), 0) || 1`; :51 `.filter((s) => s.value > 0)`. Prova: donut com [80, -40, 20] renderiza só duas marcas, meta value 80 e 20."
+ },
+ {
+  "id": "autosave-versao-antiga-apagado",
+  "title": "Rascunho de versão anterior é apagado calado",
+  "dimension": "robustez",
+  "problem": "O schema declara `specVersion: z.literal(SPEC_VERSION)` (src/core/schema.ts:143). Literal, não `z.number()`. Qualquer arquivo ou rascunho salvo com outro número de versão falha a validação inteira — provei: `{specVersion: 0, text:{title:'meu trabalho'}}` devolve 'Invalid literal value, expected 1'. E `loadInitial` (src/state/store.ts:66-75) trata essa falha em silêncio: `if (result.ok && result.spec) return result.spec` e cai no `createDefaultSpec()`. Ou seja, no dia em que o SPEC_VERSION subir para 2, todo mundo que abrir o editor perde o rascunho autossalvo sem ver uma única mensagem — a tela abre em branco como se nunca tivesse existido trabalho ali. O comentário do arquivo (schema.ts:236-238) afirma exatamente o contrário: 'versões anteriores do formato continuam abrindo sem migração explícita'. O mesmo vale para localStorage corrompido por escrita parcial.",
+  "proposal": "Trocar por `z.number().int().default(SPEC_VERSION)` e criar um `migrate(raw)` que roda antes do `safeParse`, elevando versões antigas campo a campo (hoje seria identidade). Em `loadInitial`, quando o parse falhar, não descartar: guardar o texto cru em `datastories:rascunho-recuperacao`, abrir o padrão e disparar um toast 'Não consegui abrir o rascunho salvo (motivo X). Uma cópia foi preservada.' — o usuário tem que saber que perdeu algo.",
+  "files": [
+   "src/core/schema.ts",
+   "src/state/store.ts"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "schema.ts:143 `specVersion: z.literal(SPEC_VERSION).default(SPEC_VERSION)`; store.ts:70-73 `if (result.ok && result.spec) return result.spec` sem else. Prova: safeParse({specVersion:0,...}) => 'Invalid literal value, expected 1'."
+ },
+ {
+  "id": "sem-limite-de-linhas",
+  "title": "Tabela grande trava o editor e depois quebra",
+  "dimension": "robustez",
+  "problem": "Não existe teto de linhas em lugar nenhum do caminho. `ingest` (src/ui/steps/DataStep.tsx:34-55) parseia, deriva e grava o que vier. Dois desfechos, ambos ruins. (1) Quebra dura: `parseDelimited` faz `Math.max(...matrix.map(r => r.length))` (src/core/dataset/parse.ts:129) — spread de um argumento por linha. Medi o ponto de ruptura: 100 mil linhas passa, 125 mil estoura com `RangeError: Maximum call stack size exceeded`, e no navegador o limite de pilha costuma ser menor que o do Node, então quebra antes. O erro sobe sem tratamento a partir do onPaste. (2) Muito antes disso, inutilizável: medi numa tabela de 20 mil linhas × 4 colunas, uma planilha comum, e cada tecla digitada custa clone 86ms + persist 16ms + deriveDataset 132ms + renderChart 303ms + lint 77ms, ~600ms, com 40.043 nós de SVG no DOM. O comentário do App.tsx:4-7 ('isso é barato porque os renderizadores são funções puras sobre estruturas pequenas') vale só enquanto as estruturas são pequenas.",
+  "proposal": "Trocar os três `Math.max(...)` /`Math.min(...)` sobre arrays de dados por reduce (parse.ts:129, frame.ts:90/267/272/352, model.ts:257, distribution.ts:45-46/189-190) — some a classe inteira do RangeError. Em `ingest`, aplicar um teto explícito e visível: acima de ~5.000 linhas, importar as N primeiras, setar `transform.limit` e mostrar toast 'Tabela com X linhas; o gráfico usa as primeiras 5.000. Ordene e ajuste o limite na etapa Dados.' — um gráfico editorial nunca desenha 20 mil marcas, então o corte é honesto e não custa nada ao caso de uso real.",
+  "files": [
+   "src/core/dataset/parse.ts",
+   "src/core/frame.ts",
+   "src/core/model.ts",
+   "src/core/render/distribution.ts",
+   "src/ui/steps/DataStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "parse.ts:129 `const width = Math.max(...matrix.map((r) => r.length))`. Medido: 100k linhas ok, 125k -> RangeError. 20k linhas: renderChart 303ms / 40.043 nós, deriveDataset 132ms, ciclo completo ~600ms por tecla."
+ },
+ {
+  "id": "clone-anula-cache-dataset",
+  "title": "O cache do dataset nunca acerta",
+  "dimension": "engine",
+  "problem": "`selectDataset` (src/state/store.ts:190-199) memoriza pela IDENTIDADE de `spec.data` e `spec.transform`, com um comentário dizendo que 'recalcular a inferência de tipos a cada tecla digitada num título seria desperdício visível em tabelas grandes'. É exatamente o que acontece. `update` (store.ts:95-98) faz `const draft = clone(spec)` com `structuredClone`, que clona o spec INTEIRO — inclusive `data.rows`, mesmo quando a mutação só toca `text.title`. O novo `draft.data` é um objeto novo, a comparação `cache.data === spec.data` falha sempre, e `deriveDataset` roda de novo: inferência de tipo sobre 400 amostras por coluna mais `coerce` em cada célula. Medi na tabela de 20k: com a identidade preservada o cache devolve em 0.0ms; depois de um `structuredClone`, 132ms. Cada tecla. Some-se o `structuredClone` em si (86ms) e o `inferColumns` que a DataGrid repete por conta própria (src/ui/DataGrid.tsx:30, dependência `[source]`, mesma identidade nova a cada tecla).",
+  "proposal": "Clonar por camadas em vez de fundo: `update` faz spread raso do spec e clona só os ramos que a mutação alcança, ou adota o `immer`/`produce` (estrutura persistente — ramos não tocados mantêm a identidade e o cache passa a acertar de verdade). O ganho é duplo: o cache do dataset funciona e o `structuredClone` de 86ms sobre a tabela desaparece. Como o `data` passa a ser compartilhado entre entradas do histórico, isso também resolve o consumo de memória do undo.",
+  "files": [
+   "src/state/store.ts",
+   "src/ui/DataGrid.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "store.ts:58-64 clone via structuredClone do spec inteiro; store.ts:193 `if (cache && cache.data === spec.data && ...)`. Medido: selectDataset com mesma identidade 0.0ms, após structuredClone 132.6ms."
+ },
+ {
+  "id": "lint-reconstroi-modelo",
+  "title": "O linter reconstrói o modelo do zero a cada render",
+  "dimension": "engine",
+  "problem": "`lintSpec` chama `buildModel({ spec, dataset, theme })` na linha 59 de src/advisor/lint.ts, só para ler `model.series.length` e `model.categories.length`. Mas `renderChart` já construiu esse mesmo modelo, com o mesmo spec, dataset e tema, milissegundos antes (src/core/render/index.ts:114) — e o App roda os dois em `useMemo` com exatamente as mesmas dependências (`[spec, dataset, theme]`, App.tsx:67-84). É trabalho duplicado por construção: pivot, resolução de cores, empilhamento e cálculo de domínio rodam duas vezes por tecla. Medi 77ms só do lint na tabela de 20k. Em stacked com pivot é pior, porque `pivotLongToWide` refaz o índice inteiro.",
+  "proposal": "Mudar a assinatura para `lintSpec(spec, dataset, theme, model)` e passar o modelo que o `renderChart` já produziu — o App tem os dois no mesmo escopo. Como `renderChart` hoje não expõe o modelo, devolvê-lo junto da cena (`{ scene, model }`) ou extrair um `buildScene` que recebe o modelo pronto. Corta ~15% do custo por tecla sem mudar nenhuma regra do linter.",
+  "files": [
+   "src/advisor/lint.ts",
+   "src/core/render/index.ts",
+   "src/ui/App.tsx"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "lint.ts:59 `const model = buildModel({ spec, dataset, theme })` vs render/index.ts:114 `let model = buildModel({ spec, dataset, theme })`, ambos disparados pelos useMemo de App.tsx:67 e :78 com as mesmas deps. Medido: 77.3ms por chamada em 20k linhas."
+ },
+ {
+  "id": "numeros-sem-clamp",
+  "title": "Campos numéricos aceitam qualquer coisa",
+  "dimension": "robustez",
+  "problem": "`NumberInput` faz `onChange(raw === '' ? null : Number(raw))` (src/ui/controls/index.tsx:102-105) e joga o valor direto no spec via `update`, sem passar pelo zod. Os atributos `min`/`max` do HTML são só decorativos: eles não impedem digitação, só marcam o campo como inválido. Dois estragos concretos. (1) 'Número de faixas' do histograma (src/ui/steps/ChartStep.tsx:368-378, min=2 max=60) aceita 1000000 — e `histogramModel` faz `new Array(count).fill(0)` mais um `labels.map` com `formatNumber` por faixa (src/core/render/distribution.ts:49-61), o que congela a aba. O `waffleCells` é o único que tem teto no schema (min 9, max 400); o `bins` não tem (`z.number().int().positive()`, schema.ts:42). (2) Mínimo e máximo do eixo (ChartStep.tsx:399-420) não têm limite nenhum e `computeDomain` aplica os dois sem checar ordem: `if (axis.min !== null) min = axis.min; if (axis.max !== null) max = axis.max` (src/core/model.ts:218-219). Provei com min=100 e max=10: o domínio sai [100,10], o d3 inverte a escala e as barras são desenhadas de cabeça para baixo, sem erro e sem aviso do linter. Com min===max a escala colapsa e tudo vira uma linha reta.",
+  "proposal": "Clampar no próprio `NumberInput`: `Math.min(max, Math.max(min, n))` quando min/max forem informados, mais guarda contra `Number.isNaN`. Pôr `.max(200)` no `bins` do schema. Em `computeDomain`, quando `axis.min >= axis.max`, ignorar os dois e usar o domínio automático; e acrescentar regra de linter severidade 'erro' ('eixo-invertido') dizendo que o mínimo ficou acima do máximo — hoje o único aviso de eixo existente cobre só barras com mínimo positivo (lint.ts:125-134).",
+  "files": [
+   "src/ui/controls/index.tsx",
+   "src/core/schema.ts",
+   "src/core/model.ts",
+   "src/advisor/lint.ts"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "controls/index.tsx:104 `onChange(raw === '' ? null : Number(raw))`; model.ts:218-219 aplica min/max sem checar ordem. Prova: axes.y.min=100, max=10 => yDomain [100,10] e barras desenhadas normalmente (y:32 h:396 / y:76 h:352)."
+ },
+ {
+  "id": "vazamento-entre-datasets",
+  "title": "Trocar de CSV mantém o eixo e as anotações antigas",
+  "dimension": "robustez",
+  "problem": "`ingest` (src/ui/steps/DataStep.tsx:41-48) faz uma limpeza pela metade quando entra uma tabela nova: zera `encoding`, `highlight`, `transform.sortBy`, `hiddenColumns` e `hiddenRows`. Não zera `axes.y.min` / `axes.y.max`, `annotations`, `color.overrides`, `transform.limit` nem `chart.options.bins`. O caso mais venenoso é o eixo: se o usuário travou o máximo em 500 para o dado anterior e importa um CSV que vai até 8.000, o novo gráfico é desenhado contra a escala velha — barras estouradas ou achatadas — e nada na tela diz por quê; o linter só reclama de mínimo positivo em barras (lint.ts:125). Junto disso ficam anotações de linha e faixa apontando para valores que não existem mais no domínio novo, anotações de ponto ancoradas em índices de outra tabela, e `color.overrides` com chaves de colunas extintas envenenando `resolveColors` (src/core/model.ts:122) se por acaso um nome coincidir.",
+  "proposal": "Fazer `ingest` construir o spec novo a partir de `createDefaultSpec()`, preservando só o que é do autor e não do dado: `text`, `theme`, `layout`, `chart.type`. Tudo derivado do dado (`axes.y.min/max`, `annotations`, `color.overrides`, `transform.limit`, `chart.options.bins`) volta ao padrão. Se preferir não descartar anotações, mostrar toast 'N anotações da tabela anterior foram removidas' — o silêncio é o problema, não a remoção.",
+  "files": [
+   "src/ui/steps/DataStep.tsx"
+  ],
+  "impact": "alto",
+  "effort": "baixo",
+  "evidence": "DataStep.tsx:41-48: o bloco do update toca data, encoding, highlight, transform.sortBy, hiddenColumns e hiddenRows — e nada mais. `draft.axes`, `draft.annotations` e `draft.color.overrides` não aparecem."
+ },
+ {
+  "id": "anotacao-ponto-indice-fragil",
+  "title": "Anotação de ponto muda de dado ao ordenar",
+  "dimension": "funcionalidade",
+  "problem": "A anotação de ponto guarda um `rowIndex` numérico (src/core/schema.ts:112) que é resolvido como índice do MODELO já transformado: `series.values[annotation.rowIndex]` e `frame.catPos(annotation.rowIndex)` em src/core/annotate/annotations.ts:263-268. Só que o modelo é construído sobre linhas já transpostas, ordenadas e cortadas por `deriveDataset` (src/core/dataset/transform.ts:94-102). Consequência: crie a anotação 'recorde histórico' no índice 7, depois mude 'Ordenar por' na etapa Dados — a bolinha e o rótulo continuam no índice 7, que agora é outra cidade, com outro valor impresso ao lado do texto antigo. Mesma coisa ao mexer em 'Mostrar apenas as N primeiras', ao transpor, ou ao apagar uma linha com duplo clique na grade (`removeRow`, src/ui/DataGrid.tsx:143-146, faz `splice` sem deslocar nenhum `rowIndex` de anotação). Quando o índice cai fora do intervalo a anotação some sem explicação (annotations.ts:264). O seletor da UI expõe justamente esse índice cru (src/ui/steps/AnnotateStep.tsx:543-551).",
+  "proposal": "Ancorar a anotação pelo rótulo da categoria, não pela posição: guardar `category: string` e resolver com `model.categoryLabels.indexOf(category)` — é a mesma estratégia que as anotações de faixa e linha já usam (`categoryPixel`, annotations.ts:31-46), então a ferramenta fica coerente consigo mesma. Manter `rowIndex` como fallback na leitura de arquivos antigos e migrar no parse. No seletor da etapa Anotar, listar rótulos em vez de números.",
+  "files": [
+   "src/core/annotate/annotations.ts",
+   "src/core/schema.ts",
+   "src/ui/steps/AnnotateStep.tsx",
+   "src/ui/DataGrid.tsx"
+  ],
+  "impact": "alto",
+  "effort": "medio",
+  "evidence": "annotations.ts:263 `const value = series.values[annotation.rowIndex]` e :268 `frame.catPos(annotation.rowIndex)`, sobre linhas já reordenadas em transform.ts:97 `rows = [...rows].sort(...)` e cortadas em :101 `rows = rows.slice(0, transform.limit)`."
+ },
+ {
+  "id": "quota-localstorage-silenciosa",
+  "title": "Autosave falha sem o usuário ficar sabendo",
+  "dimension": "ux",
+  "problem": "`persist` (src/state/store.ts:77-85) engole toda exceção com um `catch {}` vazio e um comentário assumindo que 'perder o autosave é melhor que derrubar o editor'. A premissa está certa, a execução não: o usuário não recebe sinal nenhum. Ele continua trabalhando meia hora acreditando que está salvo, fecha a aba e perde tudo. A cota é atingível: medi 0,79 MB de JSON só com 20 mil linhas × 4 colunas, e o limite típico é 5 MB por origem — uma tabela de 120 mil linhas passa disso, e a falha acontece na primeira tecla, calada. Modo privativo de alguns navegadores nem localStorage tem. Não existe nenhum indicador de 'salvo' na interface para o usuário desconfiar (a topbar de src/ui/App.tsx:168-182 tem só Desfazer, Refazer e Apresentar).",
+  "proposal": "Capturar o erro e propagar um estado `saveState: 'salvo' | 'falhou'` no store, mostrado como texto discreto na topbar ao lado de Desfazer ('salvo automaticamente' / 'não foi possível salvar — baixe o arquivo'). Na primeira falha, disparar toast uma única vez sugerindo o download do .datastories.json. Como paliativo barato de cota, gravar o spec sem `data.rows` quando o payload passar de ~2 MB, junto de uma marca de 'rascunho parcial', em vez de não gravar nada.",
+  "files": [
+   "src/state/store.ts",
+   "src/ui/App.tsx"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "store.ts:79-84 `try { localStorage.setItem(...) } catch { /* comentário */ }` — sem set de estado, sem toast, sem retorno. Medido: 0.79 MB de JSON para 20k linhas."
+ },
+ {
+  "id": "historico-clona-tabela-inteira",
+  "title": "Undo guarda 80 cópias completas da tabela",
+  "dimension": "robustez",
+  "problem": "Cada entrada do histórico é um `ChartSpec` inteiro, com `data.rows` junto: `const nextPast = [...past, spec].slice(-HISTORY_LIMIT)` (src/state/store.ts:112), com `HISTORY_LIMIT = 80` (store.ts:22). E como `update` sempre faz `structuredClone` do spec completo, nenhuma dessas 80 cópias compartilha memória com as outras — são 80 tabelas independentes. Na tabela de 20 mil linhas que medi, o spec ocupa 0,79 MB serializado; 80 entradas de passado mais as de futuro passam de 60 MB de heap só para permitir desfazer o ajuste de um título que não encostou nos dados. Some a isso o custo de criar cada uma (86ms de structuredClone por tecla) e a aba fica pesada de um jeito que nenhum perfil de uso justifica: 79 dessas cópias têm exatamente a mesma tabela.",
+  "proposal": "Duas correções que se combinam. (a) Ao adotar clone estrutural por camadas (achado clone-anula-cache-dataset), as 80 entradas passam a apontar para o MESMO array `data.rows` enquanto ninguém editar célula, e o problema some sozinho. (b) Independente disso, reduzir `HISTORY_LIMIT` de forma adaptativa: quando `data.rows.length` passar de alguns milhares, limitar a ~20 entradas. Vale medir com `performance.memory` em tabela grande antes e depois para confirmar o ganho.",
+  "files": [
+   "src/state/store.ts"
+  ],
+  "impact": "medio",
+  "effort": "baixo",
+  "evidence": "store.ts:22 `const HISTORY_LIMIT = 80`; store.ts:112 `[...past, spec].slice(-HISTORY_LIMIT)` com specs vindos de structuredClone (store.ts:58-64). Medido: 0.79 MB por spec em 20k linhas, ~86ms por clone."
+ }
+]

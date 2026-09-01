@@ -6,17 +6,30 @@
  * site, e o JSON do projeto para reabrir e continuar depois.
  */
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ChartSpec, Scene } from '../../core/types'
+import { toCSV } from '../../core/dataset/parse'
 import {
   buildIframeSnippet,
+  download,
   downloadEmbed,
   downloadPng,
   downloadSpec,
   downloadSvg,
+  fileNameFor,
+  sceneToPngBlob,
 } from '../../core/export'
 import { useEditor } from '../../state/store'
 import { Field, Group, NumberInput } from '../controls'
+
+// Só oferece o botão quando o navegador de fato suporta imagem na área de
+// transferência — em vez de mostrar um botão que falha sempre em navegadores
+// mais antigos.
+const canCopyImage =
+  typeof navigator !== 'undefined' &&
+  Boolean(navigator.clipboard) &&
+  typeof window !== 'undefined' &&
+  'ClipboardItem' in window
 
 export function PublishStep({ spec, scene }: { spec: ChartSpec; scene: Scene }) {
   const update = useEditor((s) => s.update)
@@ -24,14 +37,43 @@ export function PublishStep({ spec, scene }: { spec: ChartSpec; scene: Scene }) 
   const loadFromJson = useEditor((s) => s.loadFromJson)
   const reset = useEditor((s) => s.reset)
   const [snippet, setSnippet] = useState<string | null>(null)
+  const projectInput = useRef<HTMLInputElement | null>(null)
 
   const exportPng = async (scale: number) => {
     try {
       await downloadPng(scene, spec, scale)
-      showToast(`PNG @${scale}x gerado`)
+      // Mesma conta que `sceneToPngBlob` faz para o canvas — não é um palpite,
+      // é o tamanho real do arquivo que acabou de sair.
+      const width = Math.round(scene.width * scale)
+      const height = Math.round(scene.height * scale)
+      showToast(`PNG @${scale}x gerado · ${width}×${height}px`)
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Falha ao gerar o PNG.')
+      showToast({
+        kind: 'erro',
+        message: error instanceof Error ? error.message : 'Falha ao gerar o PNG.',
+      })
     }
+  }
+
+  const copyImage = async () => {
+    try {
+      const blob = await sceneToPngBlob(scene, 2)
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      showToast('Imagem copiada — cole direto num slide ou documento.')
+    } catch (error) {
+      showToast({
+        kind: 'erro',
+        message:
+          error instanceof Error
+            ? `Não foi possível copiar a imagem: ${error.message}`
+            : 'Não foi possível copiar a imagem. O navegador pode ter recusado a permissão.',
+      })
+    }
+  }
+
+  const exportData = () => {
+    download(new Blob([toCSV(spec.data)], { type: 'text/csv;charset=utf-8' }), fileNameFor(spec, 'csv'))
+    showToast('CSV com os dados da tabela gerado')
   }
 
   return (
@@ -115,9 +157,25 @@ export function PublishStep({ spec, scene }: { spec: ChartSpec; scene: Scene }) 
         >
           SVG (vetorial, editável no Illustrator)
         </button>
+        {canCopyImage && (
+          <button type="button" className="btn" onClick={copyImage}>
+            Copiar imagem
+          </button>
+        )}
         <p className="inline-note">
           Os temas usam apenas fontes do sistema, então o PNG sai com a mesma tipografia da tela e
           o SVG não depende de nenhuma fonte instalada em quem abrir.
+        </p>
+      </Group>
+
+      <Group title="Dados">
+        <button type="button" className="btn" onClick={exportData}>
+          Baixar dados (CSV)
+        </button>
+        <p className="inline-note">
+          Quem lê o gráfico publicado também quer chegar aos números — o CSV sai com a tabela
+          exatamente como foi carregada na etapa Dados (ordenação e limite de linhas são só do
+          gráfico, não afetam este arquivo).
         </p>
       </Group>
 
@@ -140,7 +198,7 @@ export function PublishStep({ spec, scene }: { spec: ChartSpec; scene: Scene }) 
             setSnippet(code)
             navigator.clipboard?.writeText(code).then(
               () => showToast('Código do iframe copiado'),
-              () => showToast('Copie o código abaixo manualmente'),
+              () => showToast({ kind: 'erro', message: 'Não foi possível copiar. Use o código abaixo.' }),
             )
           }}
         >
@@ -167,25 +225,33 @@ export function PublishStep({ spec, scene }: { spec: ChartSpec; scene: Scene }) 
           Salvar arquivo .datastories.json
         </button>
 
-        <label className="btn" style={{ textAlign: 'center', cursor: 'pointer' }}>
+        {/* Mesmo arranjo do "Abrir CSV" na etapa Dados: um `<label>` embrulhando
+            um input `display:none` sai da ordem de foco e não é alcançável só
+            de teclado. Botão real disparando o clique no input + `sr-only`
+            (que só tira da tela, sem tirar do foco) resolve isso. */}
+        <button type="button" className="btn" onClick={() => projectInput.current?.click()}>
           Abrir projeto salvo
-          <input
-            type="file"
-            accept=".json,application/json"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              e.target.value = ''
-              if (!file) return
-              const reader = new FileReader()
-              reader.onload = () => {
-                const result = loadFromJson(String(reader.result ?? ''))
-                showToast(result.ok ? 'Projeto carregado' : result.error)
-              }
-              reader.readAsText(file, 'utf-8')
-            }}
-          />
-        </label>
+        </button>
+        <input
+          ref={projectInput}
+          type="file"
+          accept=".json,application/json"
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (!file) return
+            const reader = new FileReader()
+            reader.onload = () => {
+              const result = loadFromJson(String(reader.result ?? ''))
+              if (result.ok) showToast('Projeto carregado')
+              else showToast({ kind: 'erro', message: result.error ?? 'Arquivo de projeto inválido.' })
+            }
+            reader.onerror = () =>
+              showToast({ kind: 'erro', message: 'Não foi possível ler o arquivo do projeto.' })
+            reader.readAsText(file, 'utf-8')
+          }}
+        />
 
         <button
           type="button"

@@ -32,9 +32,16 @@ const STEP_ORDER: Step[] = ['dados', 'grafico', 'anotar', 'publicar']
 /** Larguras de preview, no espírito do teste responsivo do Datawrapper. */
 const PREVIEW_WIDTHS: Array<{ id: string; label: string; maxWidth: number | null }> = [
   { id: 'auto', label: 'Responsivo', maxWidth: null },
+  { id: 'doc', label: 'Documento', maxWidth: null },
   { id: 'article', label: 'Artigo 760', maxWidth: 760 },
   { id: 'mobile', label: 'Mobile 380', maxWidth: 380 },
 ]
+
+const LAYOUT_MIN = { width: 240, height: 200 }
+const LAYOUT_MAX = { width: 1600, height: 2000 }
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value))
 
 /**
  * Largura real de um elemento, observada — é ela que alimenta o re-render do
@@ -67,14 +74,42 @@ export function App() {
   const canRedo = useEditor((s) => s.future.length > 0)
   const toast = useEditor((s) => s.toast)
   const showToast = useEditor((s) => s.showToast)
+  const saveState = useEditor((s) => s.saveState)
   const selectedAnnotation = useEditor((s) => s.selectedAnnotation)
   const selectAnnotation = useEditor((s) => s.selectAnnotation)
   const removeAnnotation = useEditor((s) => s.removeAnnotation)
+  const update = useEditor((s) => s.update)
 
   const [presenting, setPresenting] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [previewWidth, setPreviewWidth] = useState<string>('auto')
   const [stageRef, stageWidth] = useElementWidth<HTMLDivElement>()
   const [presentRef, presentWidth] = useElementWidth<HTMLDivElement>()
+
+  /**
+   * Arrasto do canto do palco para redimensionar o documento. Guarda o
+   * tamanho no início do gesto: o delta do cursor vira largura/altura novas,
+   * e a chave de coalescência faz o arrasto inteiro virar um só Ctrl+Z.
+   */
+  const resizeGesture = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    width: number
+    height: number
+  } | null>(null)
+
+  // Referências para devolver o foco a quem abriu um diálogo (apresentação
+  // ou ajuda) e para prender o Tab dentro dele enquanto estiver aberto.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const presentationRef = useRef<HTMLDivElement | null>(null)
+  const presentationCloseRef = useRef<HTMLButtonElement | null>(null)
+  const presentationReturnFocus = useRef<HTMLElement | null>(null)
+  const helpPanelRef = useRef<HTMLDivElement | null>(null)
+  const helpCloseRef = useRef<HTMLButtonElement | null>(null)
+  const helpReturnFocus = useRef<HTMLElement | null>(null)
+  /** Garante que o toast de "autosave falhou" apareça uma única vez. */
+  const saveFailureWarned = useRef(false)
 
   const dataset = useMemo(() => selectDataset(spec), [spec])
   const theme = useMemo(
@@ -138,6 +173,49 @@ export function App() {
 
   const stageScene = previewScene ?? rendered.scene
 
+  function onResizeStart(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // sem captura, o arrasto ainda funciona enquanto o cursor estiver no canto
+    }
+    // O primeiro arrasto troca o preview para o tamanho do documento: é ele
+    // que o gesto controla, e é nele que 1px de cursor = 1px de documento.
+    setPreviewWidth('doc')
+    resizeGesture.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: spec.layout.width,
+      height: spec.layout.height,
+    }
+  }
+
+  function onResizeMove(event: React.PointerEvent<HTMLDivElement>) {
+    const gesture = resizeGesture.current
+    if (!gesture || event.pointerId !== gesture.pointerId) return
+    const width = clamp(gesture.width + event.clientX - gesture.startX, LAYOUT_MIN.width, LAYOUT_MAX.width)
+    const height = clamp(gesture.height + event.clientY - gesture.startY, LAYOUT_MIN.height, LAYOUT_MAX.height)
+    update(
+      (draft) => {
+        draft.layout.width = Math.round(width)
+        draft.layout.height = Math.round(height)
+      },
+      { coalesceKey: 'layout-resize' },
+    )
+  }
+
+  function onResizeEnd(event: React.PointerEvent<HTMLDivElement>) {
+    if (!resizeGesture.current || event.pointerId !== resizeGesture.current.pointerId) return
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      // nada a liberar
+    }
+    resizeGesture.current = null
+  }
+
   /** Cena sem nenhuma marca = gráfico vazio; a cena em si só desenha eixos. */
   const hasMarks = useMemo(() => {
     if (!rendered.scene) return false
@@ -163,11 +241,82 @@ export function App() {
 
   const nextStep = STEP_ORDER[STEP_ORDER.indexOf(step) + 1]
 
+  // Só o toast de sucesso some sozinho — erro fica até a pessoa fechar,
+  // porque é o único canal de feedback do app e um erro perdido em 3,2s vira
+  // trabalho perdido sem explicação.
   useEffect(() => {
-    if (!toast) return
+    if (!toast || toast.kind !== 'ok') return
     const timer = setTimeout(() => showToast(null), 3200)
     return () => clearTimeout(timer)
   }, [toast, showToast])
+
+  // Primeira falha de autosave: um único aviso sugerindo baixar o arquivo.
+  // Depois disso o texto discreto da topbar já basta — repetir o toast a
+  // cada tecla seria mais irritante que informativo.
+  useEffect(() => {
+    if (saveState === 'falhou' && !saveFailureWarned.current) {
+      saveFailureWarned.current = true
+      showToast({
+        message:
+          'Não foi possível salvar automaticamente. Baixe o arquivo do projeto na etapa Publicar para não perder o trabalho.',
+        kind: 'erro',
+      })
+    }
+  }, [saveState, showToast])
+
+  // Apresentação e ajuda são diálogos modais: o foco precisa entrar neles ao
+  // abrir e voltar para quem os abriu ao fechar, senão o teclado continua
+  // "atrás" do overlay, invisível.
+  useEffect(() => {
+    if (presenting) {
+      presentationReturnFocus.current = document.activeElement as HTMLElement | null
+      presentationCloseRef.current?.focus()
+    } else if (presentationReturnFocus.current) {
+      presentationReturnFocus.current.focus()
+      presentationReturnFocus.current = null
+    }
+  }, [presenting])
+
+  useEffect(() => {
+    if (helpOpen) {
+      helpReturnFocus.current = document.activeElement as HTMLElement | null
+      helpCloseRef.current?.focus()
+    } else if (helpReturnFocus.current) {
+      helpReturnFocus.current.focus()
+      helpReturnFocus.current = null
+    }
+  }, [helpOpen])
+
+  /** Prende o Tab dentro de um diálogo aberto, ciclando entre os focáveis. */
+  function trapTab(event: React.KeyboardEvent, container: HTMLElement | null) {
+    if (event.key !== 'Tab' || !container) return
+    const focusables = container.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    )
+    if (focusables.length === 0) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  /** Navegação por seta/Home/End entre as abas, com foco programático (roving tabindex). */
+  function onTabKeyDown(event: React.KeyboardEvent, index: number) {
+    let nextIndex: number | null = null
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % STEPS.length
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + STEPS.length) % STEPS.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = STEPS.length - 1
+    if (nextIndex === null) return
+    event.preventDefault()
+    setStep(STEPS[nextIndex].id)
+    tabRefs.current[nextIndex]?.focus()
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -181,6 +330,8 @@ export function App() {
 
       if (event.key === 'Escape') {
         if (presenting) setPresenting(false)
+        else if (helpOpen) setHelpOpen(false)
+        else if (toast?.kind === 'erro') showToast(null)
         else if (selectedAnnotation) selectAnnotation(null)
         return
       }
@@ -213,6 +364,9 @@ export function App() {
     redo,
     setStep,
     presenting,
+    helpOpen,
+    toast,
+    showToast,
     selectedAnnotation,
     selectAnnotation,
     removeAnnotation,
@@ -225,11 +379,24 @@ export function App() {
           DataStories <small>gráficos com história</small>
         </div>
         <div className="topbar-spacer" />
+        <span className="save-state" aria-live="polite">
+          {saveState === 'salvo' && 'salvo'}
+          {saveState === 'salvando' && 'salvando…'}
+          {saveState === 'falhou' && 'não foi possível salvar — baixe o arquivo'}
+        </span>
         <button type="button" className="btn ghost" onClick={undo} disabled={!canUndo} title="Ctrl+Z">
           Desfazer
         </button>
         <button type="button" className="btn ghost" onClick={redo} disabled={!canRedo} title="Ctrl+Shift+Z">
           Refazer
+        </button>
+        <button
+          type="button"
+          className="btn ghost"
+          aria-label="Atalhos e gestos"
+          onClick={() => setHelpOpen(true)}
+        >
+          ?
         </button>
         <button type="button" className="btn primary" onClick={() => setPresenting(true)}>
           Apresentar
@@ -239,14 +406,21 @@ export function App() {
       <div className="workspace">
         <aside className="panel">
           <div className="steps" role="tablist">
-            {STEPS.map((item) => (
+            {STEPS.map((item, index) => (
               <button
                 key={item.id}
+                ref={(el) => {
+                  tabRefs.current[index] = el
+                }}
                 type="button"
                 role="tab"
-                className="step-tab"
+                id={'tab-' + item.id}
+                aria-controls="painel-etapa"
                 aria-selected={step === item.id}
+                tabIndex={step === item.id ? 0 : -1}
+                className="step-tab"
                 onClick={() => setStep(item.id)}
+                onKeyDown={(event) => onTabKeyDown(event, index)}
               >
                 <span className={'n' + (completed[item.id] ? ' done' : '')}>
                   {completed[item.id] ? '✓' : item.n}
@@ -256,13 +430,38 @@ export function App() {
             ))}
           </div>
 
-          <div className="panel-body">
+          <div
+            className="panel-body"
+            role="tabpanel"
+            id="painel-etapa"
+            tabIndex={0}
+            aria-labelledby={'tab-' + step}
+          >
             {step === 'dados' && <DataStep spec={spec} dataset={dataset} />}
             {step === 'grafico' && <ChartStep spec={spec} dataset={dataset} />}
             {step === 'anotar' && <AnnotateStep spec={spec} dataset={dataset} theme={theme} />}
-            {step === 'publicar' && rendered.scene && (
-              <PublishStep spec={spec} scene={rendered.scene} />
-            )}
+            {step === 'publicar' &&
+              (rendered.scene ? (
+                <PublishStep spec={spec} scene={rendered.scene} />
+              ) : (
+                <div className="empty-overlay">
+                  <strong>Não dá para exportar enquanto o gráfico não desenha</strong>
+                  <p>{rendered.error}</p>
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={undo}
+                      disabled={!canUndo}
+                    >
+                      Desfazer a última mudança
+                    </button>
+                    <button type="button" className="btn" onClick={() => setStep('grafico')}>
+                      Voltar para Gráfico
+                    </button>
+                  </div>
+                </div>
+              ))}
 
             {nextStep && (
               <div className="panel-next">
@@ -285,10 +484,22 @@ export function App() {
               className="stage-canvas"
               style={{
                 maxWidth:
-                  PREVIEW_WIDTHS.find((p) => p.id === previewWidth)?.maxWidth ?? 1200,
+                  previewWidth === 'doc'
+                    ? spec.layout.width
+                    : PREVIEW_WIDTHS.find((p) => p.id === previewWidth)?.maxWidth ?? 1200,
               }}
             >
               <Canvas scene={stageScene} spec={spec} />
+              <div
+                className="resize-handle"
+                role="separator"
+                aria-label="Redimensionar o gráfico"
+                title="Arraste para redimensionar o documento"
+                onPointerDown={onResizeStart}
+                onPointerMove={onResizeMove}
+                onPointerUp={onResizeEnd}
+                onPointerCancel={onResizeEnd}
+              />
               {!hasMarks && (
                 <div className="empty-overlay">
                   <strong>Nenhuma coluna de valores no gráfico</strong>
@@ -309,8 +520,17 @@ export function App() {
               )}
             </div>
           ) : (
-            <div className="empty" style={{ maxWidth: 460 }}>
-              {rendered.error}
+            <div className="empty empty-overlay" style={{ maxWidth: 460 }}>
+              <strong>Não foi possível desenhar o gráfico</strong>
+              <p>{rendered.error}</p>
+              <div className="row">
+                <button type="button" className="btn primary" onClick={undo} disabled={!canUndo}>
+                  Desfazer a última mudança
+                </button>
+                <button type="button" className="btn" onClick={() => setStep('grafico')}>
+                  Voltar para Gráfico
+                </button>
+              </div>
             </div>
           )}
 
@@ -341,12 +561,23 @@ export function App() {
       </div>
 
       {presenting && rendered.scene && (
-        <div className="presentation" role="dialog" aria-modal="true">
+        <div
+          className="presentation"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="presentation-title"
+          ref={presentationRef}
+          onKeyDown={(event) => trapTab(event, presentationRef.current)}
+        >
+          <h2 id="presentation-title" className="sr-only">
+            Apresentação em tela cheia
+          </h2>
           <button
             type="button"
             className="presentation-close"
             onClick={() => setPresenting(false)}
             title="Fechar (Esc)"
+            ref={presentationCloseRef}
           >
             fechar ✕
           </button>
@@ -358,7 +589,80 @@ export function App() {
         </div>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {helpOpen && (
+        <div
+          className="help-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="help-panel-title"
+          ref={helpPanelRef}
+          onKeyDown={(event) => trapTab(event, helpPanelRef.current)}
+        >
+          <div className="help-panel-body" onClick={(e) => e.stopPropagation()}>
+            <header className="help-panel-header">
+              <h2 id="help-panel-title">Atalhos e gestos</h2>
+              <button
+                type="button"
+                aria-label="Fechar ajuda"
+                onClick={() => setHelpOpen(false)}
+                ref={helpCloseRef}
+              >
+                ✕
+              </button>
+            </header>
+            <div className="help-panel-content">
+              <section>
+                <h3>Atalhos de teclado</h3>
+                <ul>
+                  <li><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>4</kbd> — ir para a etapa</li>
+                  <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> — desfazer</li>
+                  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> (ou <kbd>Ctrl</kbd>+<kbd>Y</kbd>) — refazer</li>
+                  <li><kbd>Delete</kbd> ou <kbd>Backspace</kbd> — remover a anotação selecionada</li>
+                  <li><kbd>Esc</kbd> — fechar diálogos, avisos e seleção</li>
+                  <li>Setas ←/→, <kbd>Home</kbd>, <kbd>End</kbd> — navegar entre as abas de etapa</li>
+                </ul>
+              </section>
+              <section>
+                <h3>Gestos no gráfico</h3>
+                <ul>
+                  <li>Clique na marca de dados — destaca o ponto no gráfico</li>
+                  <li>Clique no título do gráfico — abre a edição do texto na etapa Anotar</li>
+                  <li>Arrastar uma anotação — reposiciona ela sobre o gráfico</li>
+                </ul>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="toast-region" role="status" aria-live="polite" aria-atomic="true">
+        {toast && toast.kind === 'ok' && (
+          <div className="toast">
+            <span>{toast.message}</span>
+            {toast.action && (
+              <button type="button" className="toast-action" onClick={toast.action.run}>
+                {toast.action.label}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="toast-region" role="alert" aria-live="assertive" aria-atomic="true">
+        {toast && toast.kind === 'erro' && (
+          <div className="toast erro">
+            <span>{toast.message}</span>
+            {toast.action && (
+              <button type="button" className="toast-action" onClick={toast.action.run}>
+                {toast.action.label}
+              </button>
+            )}
+            <button type="button" aria-label="Fechar aviso" onClick={() => showToast(null)}>
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
