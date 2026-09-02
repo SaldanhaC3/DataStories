@@ -326,6 +326,10 @@ textarea {
   background: var(--panel);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  /* Filete interno sutil: separa a margem do gráfico do fundo da moldura sem
+     competir com o desenho — a sensação de "documento sobre a mesa". */
+  outline: 1px solid rgba(16, 24, 40, 0.05);
+  outline-offset: -1px;
   overflow: hidden;
   position: relative;
 }
@@ -758,15 +762,23 @@ textarea::placeholder {
   color: var(--muted);
   line-height: 1.15;
   text-align: center;
+  /* A escolha do gráfico é o gesto mais repetido da etapa 2: borda, texto e
+     leve subida respondem juntos, no mesmo tempo, para o olho seguir. */
+  transition: border-color 0.16s ease, color 0.16s ease, transform 0.16s ease,
+    background 0.16s ease, box-shadow 0.16s ease;
 }
 
 .chart-option:hover {
   border-color: var(--muted-faint);
   color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.07);
 }
 
 .chart-option:active {
   background: var(--panel-alt);
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .chart-option[aria-pressed='true'] {
@@ -1200,6 +1212,7 @@ table.data-grid tbody tr:focus-within .row-actions {
   gap: 6px;
   color: var(--muted);
   max-width: 100%;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 
 .chip:hover {
@@ -1494,6 +1507,14 @@ table.data-grid tbody tr:focus-within .row-actions {
 
 .draggable-annotation {
   cursor: move;
+}
+
+.draggable-legend {
+  cursor: grab;
+}
+
+.draggable-legend:active {
+  cursor: grabbing;
 }
 
 .mark-clickable {
@@ -1819,4 +1840,15 @@ svg .crosshair {
   .stage-canvas {
     max-width: 100%;
   }
+}
+
+/*
+ * Números em campos e leituras de tamanho em numerais tabulares: os dígitos
+ * ocupam a mesma largura, então o valor não "dança" enquanto se digita ou se
+ * usa o stepper — e colunas de números ficam alinhadas entre si.
+ */
+input[type='number'],
+.toolbar-meta,
+.save-state {
+  font-variant-numeric: tabular-nums;
 }

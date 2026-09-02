@@ -4,7 +4,7 @@
   "private": false,
   "license": "MIT",
   "type": "module",
-  "description": "Editor open source de graficos com storytelling editorial. Alternativa ao Datawrapper.",
+  "description": "Editor open source de graficos com storytelling editorial.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -29,6 +29,81 @@ const NUMBER_FORMAT_PRESETS: Array<{ value: string; label: string }> = [
   { value: '.0%', label: 'Percentual' },
 ]
 
+const EMPTY_VALUE_FORMAT = {
+  decimals: null,
+  abbreviate: false,
+  group: true,
+  prefix: '',
+  suffix: '',
+} as const
+
+/**
+ * Controles de formatação dos números impressos sobre as marcas. Cada ajuste
+ * sobrepõe só a sua parte: mexer no prefixo não perde as casas decimais que o
+ * automático deduziu do dado.
+ */
+function ValueFormatControls({ spec }: { spec: ChartSpec }) {
+  const update = useEditor((s) => s.update)
+  const vf = spec.labels.valueFormat
+
+  const setVf = (patch: Partial<NonNullable<ChartSpec['labels']['valueFormat']>>) =>
+    update((draft) => {
+      draft.labels.valueFormat = { ...EMPTY_VALUE_FORMAT, ...draft.labels.valueFormat, ...patch }
+    })
+
+  return (
+    <>
+      <Field
+        label="Formato dos valores"
+        hint="Vale para os números sobre as marcas e os das anotações de ponto. Deixe em branco para o automático."
+      >
+        <div className="row">
+          <NumberInput
+            value={vf?.decimals ?? null}
+            min={0}
+            max={6}
+            placeholder="auto"
+            onChange={(value) => setVf({ decimals: value })}
+          />
+          <TextInput
+            value={vf?.prefix ?? ''}
+            placeholder="prefixo (R$ )"
+            onChange={(value) => setVf({ prefix: value })}
+          />
+          <TextInput
+            value={vf?.suffix ?? ''}
+            placeholder="sufixo ( kg)"
+            onChange={(value) => setVf({ suffix: value })}
+          />
+        </div>
+      </Field>
+      <Toggle
+        checked={vf?.group ?? true}
+        label="Separador de milhar"
+        onChange={(value) => setVf({ group: value })}
+      />
+      <Toggle
+        checked={vf?.abbreviate ?? false}
+        label="Abreviar números grandes (12,4 mil)"
+        onChange={(value) => setVf({ abbreviate: value })}
+      />
+      {vf && (
+        <button
+          type="button"
+          className="btn tiny ghost"
+          onClick={() =>
+            update((draft) => {
+              draft.labels.valueFormat = null
+            })
+          }
+        >
+          voltar ao formato automático
+        </button>
+      )}
+    </>
+  )
+}
+
 export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset }) {
   const update = useEditor((s) => s.update)
   const definition = getChartDefinition(spec.chart.type)
@@ -230,6 +305,7 @@ export function ChartStep({ spec, dataset }: { spec: ChartSpec; dataset: Dataset
             })
           }
         />
+        <ValueFormatControls spec={spec} />
         <p className="inline-note">
           Em linhas e dispersões os números aparecem apenas quando há espaço de leitura — com
           pontos demais, o tooltip no hover cobre o papel deles.

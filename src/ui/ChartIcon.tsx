@@ -154,6 +154,46 @@ export function ChartIcon({ type }: { type: ChartType }) {
             <rect x={13} y={10} width={9} height={6} opacity={0.35} />
           </>
         )
+      case 'waterfall':
+        return (
+          <>
+            <rect x={0.5} y={9} width={4} height={6} />
+            <rect x={5.5} y={5} width={4} height={5} opacity={0.55} />
+            <rect x={10.5} y={7} width={4} height={4} />
+            <rect x={15.5} y={2} width={6} height={6} opacity={0.55} />
+          </>
+        )
+      case 'big-number':
+        return (
+          <>
+            <text x={0} y={10} fontSize={11} fontWeight={700} fontFamily="inherit" fill="currentColor">
+              42
+            </text>
+            <polyline points="1,14 6,12 11,13 16,10 21,12" {...stroke} strokeWidth={1.2} />
+          </>
+        )
+      case 'heatmap':
+        return (
+          <>
+            {[
+              [0.9, 0.55, 0.3],
+              [0.35, 0.7, 0.45],
+              [0.2, 0.4, 0.85],
+            ].map((row, r) =>
+              row.map((v, c) => (
+                <rect
+                  key={`${r}-${c}`}
+                  x={c * 7.4}
+                  y={r * 5.2}
+                  width={6.6}
+                  height={4.6}
+                  rx={0.8}
+                  opacity={0.25 + v * 0.75}
+                />
+              )),
+            )}
+          </>
+        )
     }
   }
 

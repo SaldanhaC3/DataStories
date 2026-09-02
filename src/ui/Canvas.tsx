@@ -73,6 +73,8 @@ function SceneNodeView({ node, index }: NodeProps) {
     else if (hover.key != null) className = 'mark-clickable mark-hot'
   } else if (node.handle?.startsWith('annotation:')) {
     className = 'draggable-annotation'
+  } else if (node.handle === 'legend') {
+    className = 'draggable-legend'
   }
 
   const markStyle = node.meta
@@ -194,6 +196,8 @@ interface CanvasProps {
 
 interface DragState {
   id: string
+  /** O que o arrasto move: a caixa de texto, a ponta da seta ou a legenda. */
+  mode: 'text' | 'target' | 'legend'
   pointerId: number
   startClientX: number
   startClientY: number
@@ -232,10 +236,47 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
       if (!interactive) return
       const target = event.target as Element
       const handle = target.getAttribute('data-handle')
-      if (!handle?.startsWith('annotation:')) return
+      if (!handle) return
+
+      // Legenda: o arrasto dela não depende de anotação nenhuma.
+      if (handle === 'legend') {
+        event.preventDefault()
+        try {
+          svgRef.current?.setPointerCapture(event.pointerId)
+        } catch {
+          // sem captura, seguimos com o arrasto simples
+        }
+        // Onde a legenda está agora: lido da própria cena, cobre tanto o caso
+        // já posicionado quanto o padrão (topo do painel), sem repetir aqui a
+        // conta de layout do renderizador.
+        let ax = scene.plot.x
+        let ay = scene.plot.y - 18
+        for (const node of scene.nodes) {
+          if (node.handle !== 'legend') continue
+          const nx = node.t === 'rect' ? node.x : node.t === 'text' ? node.x : Infinity
+          const ny = node.t === 'rect' ? node.y : node.t === 'text' ? node.y : Infinity
+          if (nx < ax) ax = nx
+          if (ny < ay) ay = ny
+        }
+        setDrag({
+          id: 'legend',
+          mode: 'legend',
+          pointerId: event.pointerId,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          originX: ax / scene.width,
+          originY: ay / scene.height,
+          moved: false,
+        })
+        return
+      }
+
+      if (!handle.startsWith('annotation:')) return
 
       const id = handle.slice('annotation:'.length)
-      const annotation = spec.annotations.find((a) => a.id === id)
+      const isTarget = id.endsWith(':target')
+      const annotationId = isTarget ? id.slice(0, -':target'.length) : id
+      const annotation = spec.annotations.find((a) => a.id === annotationId)
       if (!annotation || annotation.kind !== 'text') return
 
       event.preventDefault()
@@ -247,18 +288,19 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
       } catch {
         // sem captura, seguimos com o arrasto simples
       }
-      selectAnnotation(id)
+      selectAnnotation(annotationId)
       setDrag({
-        id,
+        id: annotationId,
+        mode: isTarget ? 'target' : 'text',
         pointerId: event.pointerId,
         startClientX: event.clientX,
         startClientY: event.clientY,
-        originX: annotation.x,
-        originY: annotation.y,
+        originX: isTarget ? annotation.connector.tx : annotation.x,
+        originY: isTarget ? annotation.connector.ty : annotation.y,
         moved: false,
       })
     },
-    [interactive, spec.annotations, selectAnnotation],
+    [interactive, spec.annotations, selectAnnotation, scene.nodes, scene.plot, scene.width, scene.height],
   )
 
   /**
@@ -367,8 +409,10 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
 
       if (!drag || event.pointerId !== drag.pointerId) return
       const scale = scaleOf()
-      const dx = ((event.clientX - drag.startClientX) * scale) / scene.plot.width
-      const dy = ((event.clientY - drag.startClientY) * scale) / scene.plot.height
+      const dxPx = (event.clientX - drag.startClientX) * scale
+      const dyPx = (event.clientY - drag.startClientY) * scale
+      const dx = dxPx / scene.plot.width
+      const dy = dyPx / scene.plot.height
       if (!drag.moved && Math.abs(dx) < 0.002 && Math.abs(dy) < 0.002) return
 
       setDrag({ ...drag, moved: true })
@@ -376,13 +420,27 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
       // inteiro, não cada pixel.
       update(
         (draft) => {
+          const clamp01 = (v: number) => Math.max(-0.05, Math.min(1.05, v))
+          if (drag.mode === 'legend') {
+            // A legenda anda em fração do quadro inteiro, não do painel.
+            draft.labels.legendPos = {
+              x: Math.max(0.01, Math.min(0.99, drag.originX + dxPx / scene.width)),
+              y: Math.max(0.01, Math.min(0.99, drag.originY + dyPx / scene.height)),
+            }
+            return
+          }
           const annotation = draft.annotations.find((a) => a.id === drag.id)
           if (annotation && annotation.kind === 'text') {
-            annotation.x = Math.max(-0.05, Math.min(1.05, drag.originX + dx))
-            annotation.y = Math.max(-0.05, Math.min(1.05, drag.originY + dy))
+            if (drag.mode === 'target') {
+              annotation.connector.tx = clamp01(drag.originX + dx)
+              annotation.connector.ty = clamp01(drag.originY + dy)
+            } else {
+              annotation.x = clamp01(drag.originX + dx)
+              annotation.y = clamp01(drag.originY + dy)
+            }
           }
         },
-        { coalesceKey: `drag:${drag.id}` },
+        { coalesceKey: `drag:${drag.id}:${drag.mode}` },
       )
     },
     [
@@ -501,6 +559,21 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
     [hover, scene.series],
   )
 
+  /**
+   * O tooltip lê o mesmo formato configurado para os rótulos das marcas: se a
+   * pessoa pediu "R$ " na frente e uma casa decimal, o balão de hover que
+   * mostrar outra coisa está contando outra história.
+   */
+  const formatHover = useMemo(() => {
+    const vf = spec.labels.valueFormat
+    return (value: number) => {
+      if (!vf) return formatNumber(value, null, spec.data.locale)
+      const mark = vf.group ? ',' : ''
+      const decimals = vf.decimals ?? (Number.isInteger(value) ? 0 : 2)
+      return `${vf.prefix}${formatNumber(value, `${mark}.${decimals}f`, spec.data.locale)}${vf.suffix}`
+    }
+  }, [spec.labels.valueFormat, spec.data.locale])
+
   return (
     <div
       className={
@@ -558,7 +631,7 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
           </b>
           <span>{hover.category}</span>
           <em>
-            {formatNumber(hover.value, null, spec.data.locale)}
+            {formatHover(hover.value)}
             {spec.axes.y.unit ? ` ${spec.axes.y.unit}` : ''}
           </em>
         </div>
@@ -616,7 +689,7 @@ export function Canvas({ scene, spec, interactive = true }: CanvasProps) {
           </div>
           {Number.isFinite(selected.value) && (
             <footer className="mark-popover-foot">
-              {formatNumber(selected.value, null, spec.data.locale)}
+              {formatHover(selected.value)}
               {spec.axes.y.unit ? ` ${spec.axes.y.unit}` : ''}
             </footer>
           )}

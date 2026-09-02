@@ -36,8 +36,13 @@ function baselineAttr(baseline: string | undefined): string | undefined {
 }
 
 export function nodeToSvg(node: SceneNode): string {
-  // Alvos de toque da interação do editor não fazem parte do desenho.
+  // Alvos de toque da interação do editor não fazem parte do desenho: nem os
+  // marcados "hit", nem o disco de captura da ponta da seta (transparente,
+  // grande e inútil num arquivo final).
   if (node.handle === 'hit') return ''
+  if (node.t === 'circle' && node.handle?.endsWith(':target') && node.fill === 'transparent') {
+    return ''
+  }
 
   const opacity = node.opacity !== undefined && node.opacity !== 1 ? node.opacity : undefined
 

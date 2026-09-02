@@ -131,6 +131,16 @@ export function recommend(dataset: Dataset): Recommendation[] {
     push('boxplot', 0.65, 'Várias variáveis com muitas observações: compare as dispersões.')
   }
 
+  // Matriz: muitas medidas por categoria é a forma de um mapa de calor.
+  if (shape.numericColumns >= 3 && shape.rows >= 3 && shape.categoryColumns >= 1) {
+    push('heatmap', 0.88, 'Várias medidas por categoria: a matriz de calor mostra o padrão inteiro de uma vez.')
+  }
+
+  // Um número só na mesa: o herói de abertura de matéria.
+  if (shape.numericColumns >= 1 && shape.rows === 1) {
+    push('big-number', 0.93, 'Uma linha de dados: o número em destaque com contexto diz mais que qualquer eixo.')
+  }
+
   // Deduplica mantendo a maior pontuação de cada tipo.
   const best = new Map<ChartType, Omit<Recommendation, 'label'>>()
   for (const item of out) {

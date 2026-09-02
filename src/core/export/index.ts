@@ -52,6 +52,31 @@ export function downloadSvg(scene: Scene, spec: ChartSpec): void {
   download(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), fileNameFor(spec, 'svg'))
 }
 
+/**
+ * Tabela HTML da matriz série × categoria, para o embed. Cada `<th>` com
+ * `scope` e `<caption>` com o título: é o que faz o gráfico existir para quem
+ * usa leitor de tela — e o "ver os dados" para todo mundo mais.
+ */
+export function buildDataTable(spec: ChartSpec, series: Array<{ name: string }>, categories: string[], valueAt: (series: string, row: number) => number | null): string {
+  const escape = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  const head = series.map((s) => `<th scope="col">${escape(s.name)}</th>`).join('')
+  const body = categories
+    .map((category, row) => {
+      const cells = series
+        .map((s) => {
+          const value = valueAt(s.name, row)
+          return `<td>${value === null ? '—' : escape(String(value))}</td>`
+        })
+        .join('')
+      return `<tr><th scope="row">${escape(category)}</th>${cells}</tr>`
+    })
+    .join('')
+
+  return `<table><caption>${escape(spec.text.title || 'Dados do gráfico')}</caption><thead><tr><th scope="col"></th>${head}</tr></thead><tbody>${body}</tbody></table>`
+}
+
 export function downloadSpec(spec: ChartSpec): void {
   download(
     new Blob([serializeSpec(spec)], { type: 'application/json' }),
@@ -114,7 +139,9 @@ export async function downloadPng(scene: Scene, spec: ChartSpec, scale = 2): Pro
  *
  * Sem scripts, sem rede, sem fontes externas: um arquivo que abre igual em
  * qualquer lugar e pode ser colado num CMS via iframe. O SVG é responsivo, então
- * o embed acompanha a largura do contêiner.
+ * o embed acompanha a largura do contêiner. Abaixo do gráfico, os dados: a
+ * tabela em `<details>` e o link da fonte — verificabilidade faz parte do
+ * contrato editorial, não é extra.
  */
 export function buildEmbedHtml(scene: Scene, spec: ChartSpec): string {
   const svg = sceneToSvg(scene, {
@@ -126,6 +153,22 @@ export function buildEmbedHtml(scene: Scene, spec: ChartSpec): string {
   const escape = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+  const table = buildDataTable(
+    spec,
+    scene.series,
+    scene.categories,
+    (seriesName, row) => {
+      const point = scene.points.find((p) => p.series === seriesName && p.rowIndex === row)
+      return point ? point.value : null
+    },
+  )
+
+  const sourceLink = spec.text.sourceUrl
+    ? `<p class="ds-source">Fonte: <a href="${escape(spec.text.sourceUrl)}" target="_blank" rel="noopener">${escape(spec.text.source)}</a></p>`
+    : spec.text.source
+      ? `<p class="ds-source">Fonte: ${escape(spec.text.source)}</p>`
+      : ''
+
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -134,12 +177,22 @@ export function buildEmbedHtml(scene: Scene, spec: ChartSpec): string {
 <title>${escape(spec.text.title || 'Gráfico')}</title>
 <style>
   html, body { margin: 0; padding: 0; background: ${scene.background}; }
-  .datastories-embed { max-width: ${Math.round(scene.width)}px; margin: 0 auto; }
+  .datastories-embed { max-width: ${Math.round(scene.width)}px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; }
   .datastories-embed svg { width: 100%; height: auto; display: block; }
+  .ds-source { font-size: 12px; margin: 8px 0 4px; }
+  .ds-source a { color: inherit; }
+  details { font-size: 12px; margin-top: 4px; }
+  details summary { cursor: pointer; color: #666; }
+  details table { border-collapse: collapse; margin-top: 8px; width: 100%; }
+  details th, details td { border: 1px solid #ddd; padding: 4px 8px; text-align: right; }
+  details th[scope="row"], details th[scope="col"]:first-child { text-align: left; }
+  details caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
 </style>
 </head>
 <body>
-<div class="datastories-embed">${svg}</div>
+<div class="datastories-embed">${svg}${sourceLink}
+<details><summary>Ver os dados</summary>${table}</details>
+</div>
 </body>
 </html>
 `

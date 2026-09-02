@@ -78,6 +78,9 @@ export type ChartType =
   | 'donut'
   | 'waffle'
   | 'treemap'
+  | 'waterfall'
+  | 'big-number'
+  | 'heatmap'
 
 export type StackMode = 'none' | 'stacked' | 'stacked100'
 export type CurveMode = 'linear' | 'smooth' | 'step'
@@ -164,6 +167,25 @@ export interface LabelSpec {
   valueLabels: boolean
   /** Rótulo direto apenas nas séries destacadas. */
   labelHighlightedOnly: boolean
+  /**
+   * Posição customizada da legenda, em fração do quadro (0..1) com âncora no
+   * canto superior esquerdo. null = posição padrão, acima do painel.
+   */
+  legendPos: { x: number; y: number } | null
+  /**
+   * Formatação dos valores impressos sobre as marcas. null = automático,
+   * deduzido do próprio dado. Cada campo sobrepõe só a sua parte.
+   */
+  valueFormat: {
+    /** Casas decimais fixas; null mantém a precisão deduzida do dado. */
+    decimals: number | null
+    /** Abrevia grandes: 12.400 vira "12,4 mil". */
+    abbreviate: boolean
+    /** Separador de milhar. */
+    group: boolean
+    prefix: string
+    suffix: string
+  } | null
 }
 
 // ---------------------------------------------------------------------------

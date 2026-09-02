@@ -3,7 +3,7 @@
 Editor open source de gráficos com padrão editorial. Roda no navegador: você cola os dados,
 escolhe o gráfico, anota a história e exporta.
 
-É uma alternativa livre ao Datawrapper e ao Flourish, com uma tese específica: **o caminho mais
+É uma ferramenta livre e independente, com uma tese específica: **o caminho mais
 fácil deve produzir o gráfico bem-feito.** O padrão do editor já é o padrão profissional, e um
 linter avisa quando você está saindo dele — sempre explicando por quê.
 
@@ -37,7 +37,7 @@ rascunho fica no `localStorage`.
 
 ```bash
 npm run build   # checagem de tipos + bundle de produção em dist/
-npm test        # 84 testes sobre o núcleo
+npm test        # 99 testes sobre o núcleo
 ```
 
 > Com npm 11, o `npm install` bloqueia scripts de instalação por padrão e o esbuild — usado pelo
@@ -56,19 +56,20 @@ formato numérico (`1.234,56` vs `1,234.56`) e o formato de data (`15/03/2024`, 
 `2024-Q1`) são detectados. Dá para transpor, ordenar e limitar sem voltar à planilha.
 
 **2. Gráfico** — o conselheiro sugere os três tipos mais adequados ao formato da sua tabela e diz
-o porquê de cada um. Catorze tipos disponíveis:
+o porquê de cada um. Dezessete tipos disponíveis:
 
 - **Núcleo editorial** — barras verticais e horizontais (agrupadas, empilhadas, 100%), linhas,
-  área, dispersão
+  área, dispersão, cascata, número grande
 - **Comparação e ranking** — haltere, inclinação, pirulito, bala
-- **Distribuição e composição** — histograma, boxplot, rosca, waffle, treemap
+- **Distribuição e composição** — histograma, boxplot, rosca, waffle, treemap, mapa de calor
 
 **3. Anotar** — título-conclusão, subtítulo, destaque de série ou categoria, rótulos diretos,
-anotação de texto com seta arrastável, faixa de período, linha de referência, destaque de ponto,
-cores por série e rodapé com fonte, nota e crédito.
+anotação de texto com seta arrastável (inclusive a ponta), faixa de período, linha de referência,
+destaque de ponto, cores por série, legenda reposicionável com arrasto, formato configurável dos
+valores (casas decimais, prefixo/sufixo, abreviação) e rodapé com fonte, nota e crédito.
 
-**4. Publicar** — PNG em 1x/2x/3x, SVG vetorial, HTML autocontido para embed e o arquivo
-`.datastories.json` do projeto.
+**4. Publicar** — PNG em 1x/2x/3x, SVG vetorial, HTML autocontido para embed (com "ver os dados"
+em tabela acessível e link da fonte), CSV da tabela e o arquivo `.datastories.json` do projeto.
 
 ## Arquitetura
 
@@ -152,7 +153,7 @@ não é uma paleta melhor: é destacar uma ou duas. Os números estão verificad
 As convenções vêm de guias consolidados de visualização, não de gosto pessoal:
 [Hands-On Data Visualization](https://handsondataviz.org/chart-design.html),
 [School of Cities / Toronto](https://schoolofcities.github.io/urban-data-storytelling/),
-Datawrapper Academy, o guia de visualização de dados da União Europeia e o
+guias de redações de dados (data journalism), o guia de visualização de dados da União Europeia e o
 [PolicyViz](https://policyviz.com/).
 
 ## Licença

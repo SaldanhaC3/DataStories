@@ -188,7 +188,9 @@ export function lintSpec(spec: ChartSpec, dataset: Dataset, theme: Theme): LintI
   }
 
   // --- Cor e ênfase ----------------------------------------------------------
-  if (seriesCount > 6 && spec.highlight.series.length === 0) {
+  // Mapa de calor fica de fora: lá "muitas colunas" é a natureza da matriz, e
+  // a cor já codifica valor — o conselho de destacar séries não se aplicaria.
+  if (seriesCount > 6 && spec.chart.type !== 'heatmap' && spec.highlight.series.length === 0) {
     add({
       id: 'cores-demais',
       severity: 'aviso',

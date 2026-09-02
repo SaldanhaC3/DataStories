@@ -160,6 +160,9 @@ export const chartSpecSchema = z.object({
           'donut',
           'waffle',
           'treemap',
+          'waterfall',
+          'big-number',
+          'heatmap',
         ])
         .default('bar'),
       options: chartOptions.default({}),
@@ -190,6 +193,20 @@ export const chartSpecSchema = z.object({
       legend: z.enum(['auto', 'off', 'top']).default('auto'),
       valueLabels: z.boolean().default(false),
       labelHighlightedOnly: z.boolean().default(false),
+      legendPos: z
+        .object({ x: z.number(), y: z.number() })
+        .nullable()
+        .default(null),
+      valueFormat: z
+        .object({
+          decimals: z.number().int().min(0).max(6).nullable().default(null),
+          abbreviate: z.boolean().default(false),
+          group: z.boolean().default(true),
+          prefix: z.string().default(''),
+          suffix: z.string().default(''),
+        })
+        .nullable()
+        .default(null),
     })
     .default({}),
   annotations: z.array(annotation).default([]),

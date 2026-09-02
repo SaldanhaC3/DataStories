@@ -320,6 +320,22 @@ export function AnnotateStep({
             }
           />
         </Field>
+        <p className="inline-note">
+          Com a legenda visível, arraste-a direto no gráfico para posicioná-la onde quiser.
+        </p>
+        {spec.labels.legendPos && (
+          <button
+            type="button"
+            className="btn tiny ghost"
+            onClick={() =>
+              update((draft) => {
+                draft.labels.legendPos = null
+              })
+            }
+          >
+            devolver a legenda ao topo
+          </button>
+        )}
       </Group>
 
       <Group title={colorByCategory ? 'Cores por categoria' : 'Cores por série'}>
@@ -485,7 +501,8 @@ export function AnnotateStep({
                   }
                 />
                 <p className="inline-note">
-                  Arraste o texto direto no gráfico para posicioná-lo.
+                  Arraste o texto direto no gráfico para posicioná-lo — e arraste a ponta da seta
+                  para mudar onde ela aponta.
                 </p>
                 <div className="row">
                   <Segmented

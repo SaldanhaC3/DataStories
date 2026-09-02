@@ -27,6 +27,8 @@ import { CARTESIAN_CHARTS } from './cartesian'
 import { COMPARISON_CHARTS } from './comparison'
 import { DISTRIBUTION_CHARTS } from './distribution'
 import { PARTITION_CHARTS } from './partition'
+import { EDITORIAL_CHARTS } from './editorial'
+import { MATRIX_CHARTS } from './matrix'
 
 export * from './context'
 
@@ -35,6 +37,8 @@ const DEFINITIONS: ChartDefinition[] = [
   ...COMPARISON_CHARTS,
   ...DISTRIBUTION_CHARTS,
   ...PARTITION_CHARTS,
+  ...EDITORIAL_CHARTS,
+  ...MATRIX_CHARTS,
 ]
 
 const REGISTRY = new Map<ChartType, ChartDefinition>(
@@ -53,7 +57,9 @@ export function allChartDefinitions(): ChartDefinition[] {
 
 /**
  * Legenda no topo. Só é desenhada quando os rótulos diretos estão desligados —
- * as duas coisas juntas seriam redundância.
+ * as duas coisas juntas seriam redundância. Quando `spec.labels.legendPos`
+ * existe, ela é desenhada ali (fração do quadro) em vez do topo do painel, e
+ * cada nó carrega o handle `legend` para o editor permitir arrastá-la.
  */
 function renderLegend(
   model: ChartModel,
@@ -84,6 +90,7 @@ function renderLegend(
         h: 10,
         rx: 2,
         fill: series.color,
+        handle: 'legend',
       },
       {
         t: 'text',
@@ -93,6 +100,7 @@ function renderLegend(
         fill: series.muted ? theme.muted : theme.foreground,
         size: theme.labelSize,
         family: theme.fontFamily,
+        handle: 'legend',
       },
     )
     cursorX += width
@@ -138,7 +146,9 @@ export function renderChart(options: RenderOptions): Scene {
       (spec.labels.legend === 'auto' && !wantsDirectLabels))
 
   // A legenda e medida antes do quadro para que o painel ceda a altura dela,
-  // em vez de a legenda ser desenhada por cima das marcas.
+  // em vez de a legenda ser desenhada por cima das marcas. Posicionada à mão,
+  // ela flutua sobre o desenho: o painel volta a usar o espaço inteiro.
+  const legendFree = spec.labels.legendPos != null
   const legendHeight = showLegend
     ? renderLegend(model, theme, 0, 0, Math.max(120, width - 52)).height + 6
     : 0
@@ -155,7 +165,8 @@ export function renderChart(options: RenderOptions): Scene {
     reserveRight,
     bare: definition.bare,
     suppressCategoryAxis: definition.suppressCategoryAxis,
-    reserveTop: legendHeight,
+    reserveLeft: definition.reserveLeft?.(model, spec, theme) ?? 0,
+    reserveTop: legendFree ? 0 : legendHeight,
   })
 
   const nodes: SceneNode[] = [
@@ -164,13 +175,16 @@ export function renderChart(options: RenderOptions): Scene {
   ]
 
   if (showLegend) {
-    const legend = renderLegend(
-      model,
-      theme,
-      frame.plot.x,
-      frame.plot.y - legendHeight,
-      frame.plot.width,
-    )
+    const pos = spec.labels.legendPos
+    const legend = pos
+      ? renderLegend(model, theme, pos.x * width, pos.y * height, width - pos.x * width - 8)
+      : renderLegend(
+          model,
+          theme,
+          frame.plot.x,
+          frame.plot.y - legendHeight,
+          frame.plot.width,
+        )
     nodes.push(...legend.nodes)
   }
 

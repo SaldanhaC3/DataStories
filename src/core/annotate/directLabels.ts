@@ -51,7 +51,11 @@ export function measureDirectLabels(
   const widths = targets.map((s) =>
     measureText(truncate(s.name, MAX_CHARS), theme.labelSize, theme.fontFamily, 600),
   )
-  return Math.max(0, Math.max(...widths) + GAP + 4)
+  // Com o valor junto do nome, reserva-se espaço para um número típico — a
+  // medida exata só existe depois do quadro montado, e margem curta cortaria o
+  // rótulo no meio.
+  const valueRoom = labels.valueLabels ? theme.labelSize * 3.2 : 0
+  return Math.max(0, Math.max(...widths) + GAP + 4 + valueRoom)
 }
 
 /**
@@ -94,7 +98,15 @@ export function renderDirectLabels(
 
   const nodes: SceneNode[] = []
   for (const entry of entries) {
-    const text = truncate(entry.series.name, MAX_CHARS)
+    // O rótulo leva o último valor junto quando os valores estão ligados: a
+    // pergunta de quem lê uma linha até o fim é "terminou em quanto?", e o
+    // nome sozinho deixa a resposta no tooltip.
+    const index = lastDefined(entry.series)
+    const value = index >= 0 ? entry.series.values[index] : null
+    const text =
+      labels.valueLabels && value !== null
+        ? `${truncate(entry.series.name, MAX_CHARS)}  ${frame.formatDatum(value)}`
+        : truncate(entry.series.name, MAX_CHARS)
     const x = Math.min(entry.x + GAP, frame.plot.x + frame.plot.width + GAP)
 
     // Deslocou o bastante para o leitor perder a linha de vista? Liga com um traço.

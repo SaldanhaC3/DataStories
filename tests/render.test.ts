@@ -311,3 +311,71 @@ describe('linter editorial', () => {
     expect(lintOf(spec).filter((i) => i.severity !== 'dica')).toEqual([])
   })
 })
+
+describe('mapa de calor', () => {
+  it('emite uma célula por par categoria × série, com meta para o hover', () => {
+    const scene = render(makeSpec('heatmap'))
+    const cells = scene.nodes.filter((n) => n.t === 'rect' && n.meta)
+    // 5 regiões × 2 anos = 10 células
+    expect(cells.length).toBe(10)
+    for (const cell of cells) {
+      expect(cell.meta?.series).toBeTruthy()
+      expect(Number.isFinite(cell.meta?.value)).toBe(true)
+    }
+  })
+
+  it('não desenha célula para valor ausente', () => {
+    const scene = render(
+      makeSpec('heatmap', (s) => {
+        s.data.rows[2][1] = ''
+      }),
+    )
+    const cells = scene.nodes.filter((n) => n.t === 'rect' && n.meta)
+    expect(cells.length).toBe(9)
+  })
+})
+
+describe('lacunas em linhas', () => {
+  it('ponto isolado entre lacunas ganha marcador mesmo com showPoints desligado', () => {
+    const scene = render(
+      makeSpec('line', (s) => {
+        s.encoding.y = ['2019']
+        // Só o meio preenchido: vizinhos nulos nas duas pontas.
+        s.data.rows[0][1] = ''
+        s.data.rows[2][1] = ''
+        s.data.rows[3][1] = ''
+        s.data.rows[4][1] = ''
+      }),
+    )
+    const circles = scene.nodes.filter((n) => n.t === 'circle' && n.meta)
+    expect(circles.length).toBe(1)
+  })
+})
+
+describe('rótulo direto com valor', () => {
+  it('leva o último valor junto do nome quando os valores estão ligados', () => {
+    const scene = render(
+      makeSpec('line', (s) => {
+        s.labels.valueLabels = true
+        s.labels.directLabels = true
+      }),
+    )
+    const label = scene.nodes.find((n) => n.t === 'text' && n.handle?.startsWith('direct-label:'))
+    expect(label).toBeTruthy()
+    expect((label as { text: string }).text).toMatch(/2019\s+7[0-9],[0-9]/)
+  })
+})
+
+describe('embed', () => {
+  it('carrega a tabela de dados e o link da fonte', async () => {
+    const { buildEmbedHtml } = await import('../src/core/export/index')
+    const spec = makeSpec('bar', (s) => {
+      s.text.sourceUrl = 'https://exemplo.org/dados'
+    })
+    const scene = render(spec)
+    const html = buildEmbedHtml(scene, spec)
+    expect(html).toContain('<summary>Ver os dados</summary>')
+    expect(html).toContain('scope="col"')
+    expect(html).toContain('href="https://exemplo.org/dados"')
+  })
+})

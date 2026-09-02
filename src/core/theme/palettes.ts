@@ -88,6 +88,40 @@ export const NOCTURNE: string[] = [
   '#D8DEE6',
 ]
 
+/**
+ * "Palma": verdes e amarelos de baixa saturação, para poucas categorias sem
+ * ordem. As cores conversam entre si em vez de competir — o gráfico fica
+ * calmo mesmo com as quatro cores acesas.
+ */
+export const PALM: string[] = [
+  '#3E7A5E',
+  '#A8A23C',
+  '#6E9A7C',
+  '#C2B25A',
+  '#2E5B47',
+  '#8C846A',
+  '#4F8A6E',
+  '#D0C98F',
+]
+
+/**
+ * "Arame": tons neutros com um único ponto focal laranja na primeira posição.
+ * Pensada para o destaque editorial mais forte que existe: tudo discreto, uma
+ * coisa só acesa. As posições seguintes alternam matizes frios e quentes para
+ * continuarem distinguíveis sob daltonismo, e todas passam de 3:1 contra o
+ * fundo do tema Foco — as duas coisas verificadas pelo teste de cor.
+ */
+export const WIRE: string[] = [
+  '#E8490D',
+  '#5B7A99',
+  '#9C8468',
+  '#2F4359',
+  '#7A8598',
+  '#5C5248',
+  '#3A4149',
+  '#2B2F35',
+]
+
 // ---------------------------------------------------------------------------
 // Sequenciais e divergentes
 // ---------------------------------------------------------------------------
@@ -125,6 +159,18 @@ export const SEQ_GREEN: string[] = [
   '#0E4430',
 ]
 
+/** "Porcelana": azul-céu monotomático, claro para escuro. */
+export const SEQ_PORCELAIN: string[] = [
+  '#EEF4F8',
+  '#D3E3EE',
+  '#ADCFE2',
+  '#82B6D1',
+  '#5C9BBE',
+  '#3A7FA8',
+  '#25648C',
+  '#154767',
+]
+
 export const DIV_RED_BLUE: string[] = [
   '#A32D3F',
   '#C75F6B',
@@ -154,9 +200,12 @@ export const PALETTES: Palette[] = [
   { id: 'accessible', name: 'Acessível', kind: 'categorical', colors: ACCESSIBLE },
   { id: 'newsroom', name: 'Redação', kind: 'categorical', colors: NEWSROOM },
   { id: 'nocturne', name: 'Noturna', kind: 'categorical', colors: NOCTURNE },
+  { id: 'palm', name: 'Palma', kind: 'categorical', colors: PALM },
+  { id: 'wire', name: 'Arame', kind: 'categorical', colors: WIRE },
   { id: 'seq-blue', name: 'Azul sequencial', kind: 'sequential', colors: SEQ_BLUE },
   { id: 'seq-warm', name: 'Quente sequencial', kind: 'sequential', colors: SEQ_WARM },
   { id: 'seq-green', name: 'Verde sequencial', kind: 'sequential', colors: SEQ_GREEN },
+  { id: 'seq-porcelain', name: 'Porcelana', kind: 'sequential', colors: SEQ_PORCELAIN },
   { id: 'div-red-blue', name: 'Vermelho–Azul', kind: 'diverging', colors: DIV_RED_BLUE },
   { id: 'div-brown-teal', name: 'Marrom–Verde-água', kind: 'diverging', colors: DIV_BROWN_TEAL },
 ]

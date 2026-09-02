@@ -104,6 +104,8 @@ export interface FrameInput {
   categoryKind: CategoryScaleKind
   /** Espaço extra reservado à direita para rótulos diretos. */
   reserveRight?: number
+  /** Espaço extra reservado à esquerda, para rótulos de linha (heatmap). */
+  reserveLeft?: number
   /** Espaço extra reservado acima do painel, para a legenda. */
   reserveTop?: number
   /** Desliga a grade e os eixos (donut, waffle, treemap). */
@@ -289,7 +291,7 @@ export function buildFrame(input: FrameInput): Frame {
   const showCategoryAxis =
     spec.axes.x.visible && !bare && !input.suppressCategoryAxis
 
-  let left = PADDING
+  let left = PADDING + (input.reserveLeft ?? 0)
   let right = PADDING + (input.reserveRight ?? 0)
   let top = headerBottom
   let bottom = footerTop
@@ -340,8 +342,11 @@ export function buildFrame(input: FrameInput): Frame {
     const scale = scaleBand<number>()
       .domain(model.categories.map((_, i) => i))
       .range(catRange)
-      .paddingInner(spec.chart.options.barPadding)
-      .paddingOuter(spec.chart.options.barPadding / 2)
+      // Histograma é uma distribuição contínua fatiada: as faixas colam uma
+      // na outra. Folga entre elas lê-se como categorias distintas, que é
+      // exatamente a leitura que um histograma não deve sugerir.
+      .paddingInner(spec.chart.type === 'histogram' ? 0 : spec.chart.options.barPadding)
+      .paddingOuter(spec.chart.type === 'histogram' ? 0 : spec.chart.options.barPadding / 2)
     band = scale.bandwidth()
     catPos = (i) => (scale(i) ?? 0) + band / 2
 
@@ -377,10 +382,17 @@ export function buildFrame(input: FrameInput): Frame {
       const count = pickTickCount(
         orientation === 'vertical' ? plot.width : plot.height,
       )
+      // Ticks consecutivos não podem repetir o mesmo rótulo: com padrão de
+      // mês curto, "jan jan" é informação zero e tinta desperdiçada. Mantém o
+      // primeiro e pula os irmãos idênticos até aparecer um rótulo novo.
+      let lastLabel = ''
       for (const date of scale.ticks(count)) {
+        const label = formatDate(date.getTime(), pattern, locale)
+        if (label === lastLabel) continue
+        lastLabel = label
         categoryTicks.push({
           value: date.getTime(),
-          label: formatDate(date.getTime(), pattern, locale),
+          label,
           position: scale(date),
         })
       }
@@ -564,13 +576,29 @@ export function buildFrame(input: FrameInput): Frame {
 /**
  * Precisao de rotulo de valor deduzida dos proprios numeros: contamos as casas
  * decimais realmente presentes, ate duas. Numeros grandes sao abreviados.
+ *
+ * `spec.labels.valueFormat` sobrepoe partes: casas decimais fixas, abreviacao,
+ * separador de milhar e prefixo/sufixo. O que estiver em null/'' continua no
+ * automatico, entao "so quero R$ na frente" nao exige configurar o resto.
  */
 function makeDatumFormatter(
   model: ChartModel,
   spec: ChartSpec,
   locale: LocaleId,
 ): (v: number) => string {
-  if (spec.axes.y.format) {
+  const vf = spec.labels.valueFormat
+  const prefix = vf?.prefix ?? ''
+  const suffix = vf?.suffix ?? ''
+  const wrap = (fmt: (v: number) => string): (v: number) => string =>
+    prefix === '' && suffix === '' ? fmt : (v) => `${prefix}${fmt(v)}${suffix}`
+  const groupMark = vf && !vf.group ? '' : ','
+  const decimals = vf && vf.decimals !== null ? vf.decimals : null
+
+  if (vf && vf.abbreviate) {
+    return wrap((v) => abbreviate(v, locale, decimals ?? 1))
+  }
+
+  if (spec.axes.y.format && !vf) {
     const custom = spec.axes.y.format
     return (v) => {
       try {
@@ -580,24 +608,25 @@ function makeDatumFormatter(
       }
     }
   }
-  if (model.normalized) return (v) => `${Math.round(v)}%`
+  if (model.normalized && !vf) return (v) => `${Math.round(v)}%`
 
-  let decimals = 0
+  let autoDecimals = 0
   let maxAbs = 0
   for (const series of model.series) {
     for (const value of series.values) {
       if (value === null || !Number.isFinite(value)) continue
       maxAbs = Math.max(maxAbs, Math.abs(value))
-      if (decimals < 2 && !Number.isInteger(value)) {
+      if (autoDecimals < 2 && !Number.isInteger(value)) {
         const text = String(Math.abs(value))
         const dot = text.indexOf('.')
-        if (dot >= 0) decimals = Math.max(decimals, Math.min(2, text.length - dot - 1))
+        if (dot >= 0) autoDecimals = Math.max(autoDecimals, Math.min(2, text.length - dot - 1))
       }
     }
   }
 
-  if (maxAbs >= 10_000) return (v) => abbreviate(v, locale)
-  return (v) => formatNumber(v, `,.${decimals}f`, locale)
+  const places = decimals ?? autoDecimals
+  if (maxAbs >= 10_000 && !vf) return (v) => abbreviate(v, locale)
+  return wrap((v) => formatNumber(v, `${groupMark}.${places}f`, locale))
 }
 
 /** Ticks "redondos" no domínio, respeitando escala log. */

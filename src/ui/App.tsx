@@ -29,7 +29,7 @@ const STEPS: Array<{ id: Step; n: string; label: string }> = [
 
 const STEP_ORDER: Step[] = ['dados', 'grafico', 'anotar', 'publicar']
 
-/** Larguras de preview, no espírito do teste responsivo do Datawrapper. */
+/** Larguras de preview, para testar a leitura em telas estreitas antes de publicar. */
 const PREVIEW_WIDTHS: Array<{ id: string; label: string; maxWidth: number | null }> = [
   { id: 'auto', label: 'Responsivo', maxWidth: null },
   { id: 'doc', label: 'Documento', maxWidth: null },
@@ -355,6 +355,33 @@ export function App() {
       if (!typing && selectedAnnotation && (event.key === 'Delete' || event.key === 'Backspace')) {
         event.preventDefault()
         removeAnnotation(selectedAnnotation)
+        return
+      }
+
+      // Setas fazem o ajuste fino da anotação selecionada: 1% por toque,
+      // 5% com Shift. É o acabamento que o mouse não alcança — deslocar uma
+      // anotação meio milímetro arrastando é impossível, com seta é exato.
+      if (!typing && selectedAnnotation && event.key.startsWith('Arrow')) {
+        const step = event.shiftKey ? 0.05 : 0.01
+        const deltas: Record<string, [number, number]> = {
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+        }
+        const delta = deltas[event.key]
+        if (!delta) return
+        event.preventDefault()
+        update(
+          (draft) => {
+            const annotation = draft.annotations.find((a) => a.id === selectedAnnotation)
+            if (annotation?.kind === 'text') {
+              annotation.x = Math.max(-0.05, Math.min(1.05, annotation.x + delta[0]))
+              annotation.y = Math.max(-0.05, Math.min(1.05, annotation.y + delta[1]))
+            }
+          },
+          { coalesceKey: `nudge:${selectedAnnotation}` },
+        )
       }
     }
     window.addEventListener('keydown', onKey)
@@ -370,6 +397,7 @@ export function App() {
     selectedAnnotation,
     selectAnnotation,
     removeAnnotation,
+    update,
   ])
 
   return (
@@ -628,6 +656,9 @@ export function App() {
                   <li>Clique na marca de dados — destaca o ponto no gráfico</li>
                   <li>Clique no título do gráfico — abre a edição do texto na etapa Anotar</li>
                   <li>Arrastar uma anotação — reposiciona ela sobre o gráfico</li>
+                  <li>Arrastar a ponta da seta — muda onde a anotação aponta</li>
+                  <li>Arrastar a legenda — posiciona ela onde quiser</li>
+                  <li>Setas do teclado com anotação selecionada — ajuste fino da posição (Shift = passos maiores)</li>
                 </ul>
               </section>
             </div>

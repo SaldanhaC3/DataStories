@@ -360,6 +360,18 @@ function renderText(
       linecap: 'round',
     })
 
+    // A ponta é um alvo de arrasto: um disco transparente maior que a seta dá
+    // uma área agarrável generosa sem desenhar nada no impresso.
+    const targetHandle = `annotation:${annotation.id}:target`
+    nodes.push({
+      t: 'circle',
+      cx: tx,
+      cy: ty,
+      r: 9,
+      fill: 'transparent',
+      handle: targetHandle,
+    })
+
     if (annotation.connector.arrow) {
       const ax = tx - mx
       const ay = ty - my
@@ -375,6 +387,7 @@ function renderText(
         t: 'path',
         d: `M${tx},${ty}L${p1x},${p1y}L${p2x},${p2y}Z`,
         fill: color,
+        handle: targetHandle,
       })
     }
     void len

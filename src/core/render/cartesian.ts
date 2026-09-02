@@ -225,6 +225,33 @@ function drawLines(ctx: DrawContext, filled: boolean): SceneNode[] {
       }
     }
 
+    // Pontos isolados — vizinhos nulos nas duas pontas — ganham marcador
+    // sempre, mesmo com "marcar os pontos" desligado: um valor sozinho no meio
+    // de lacunas é um dado real, e sem o círculo ele simplesmente não existe
+    // no desenho. É a convenção de todo editor maduro.
+    if (!showPoints && !singleton) {
+      for (const p of defined) {
+        const prev = points[p.i - 1]
+        const next = points[p.i + 1]
+        if ((prev && prev.defined) || (next && next.defined)) continue
+        nodes.push({
+          t: 'circle',
+          cx: vertical ? p.cat : p.val,
+          cy: vertical ? p.val : p.cat,
+          r: Math.max(spec.chart.options.pointRadius, width * 0.9),
+          fill: s.color,
+          stroke: theme.background,
+          strokeWidth: 1.5,
+          meta: {
+            series: s.name,
+            rowIndex: p.i,
+            category: model.categoryLabels[p.i],
+            value: p.value ?? 0,
+          },
+        })
+      }
+    }
+
     // Rótulos de valor: só quando o espaçamento dá espaço de leitura. Uma
     // etiqueta a cada 26px é o limite antes de virar ruído; com hover e
     // tooltip disponíveis, rótulo apertado não compra nada.

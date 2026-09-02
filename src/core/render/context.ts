@@ -51,6 +51,8 @@ export interface ChartDefinition {
    * boxplot transpõe séries em categorias.
    */
   transformModel?: (model: ChartModel, spec: ChartSpec) => ChartModel
+  /** Margem esquerda extra, para rótulos desenhados pelo próprio renderizador. */
+  reserveLeft?: (model: ChartModel, spec: ChartSpec, theme: Theme) => number
   /** O renderizador desenha seus próprios rótulos de categoria. */
   suppressCategoryAxis?: boolean
   /** O renderizador rotula as series por conta propria; legenda seria repeticao. */

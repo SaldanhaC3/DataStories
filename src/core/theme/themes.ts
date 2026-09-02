@@ -10,8 +10,8 @@
  */
 
 import type { Theme, ThemeTokens } from '../types'
-import { ACCESSIBLE, EDITORIAL, NEWSROOM, NOCTURNE } from './palettes'
-import { SEQ_BLUE, SEQ_WARM, DIV_RED_BLUE, DIV_BROWN_TEAL } from './palettes'
+import { ACCESSIBLE, EDITORIAL, NEWSROOM, NOCTURNE, WIRE } from './palettes'
+import { SEQ_BLUE, SEQ_PORCELAIN, SEQ_WARM, DIV_RED_BLUE, DIV_BROWN_TEAL } from './palettes'
 
 const SANS =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
@@ -87,6 +87,30 @@ export const THEMES: Theme[] = [
     sequential: SEQ_BLUE,
     diverging: DIV_RED_BLUE,
     accent: '#5AA9F0',
+    rule: true,
+  },
+  {
+    id: 'focus',
+    name: 'Foco',
+    description:
+      'Tons neutros com um único ponto laranja. O destaque editorial mais forte.',
+    background: '#FAFAF8',
+    foreground: '#26282B',
+    muted: '#787D85',
+    grid: '#E7E7E3',
+    axis: '#C4C6C2',
+    mutedSeries: '#C9CCD1',
+    fontFamily: SANS,
+    titleFamily: SANS,
+    titleSize: 21,
+    titleWeight: 700,
+    subtitleSize: 14,
+    labelSize: 12,
+    footerSize: 11,
+    palette: WIRE,
+    sequential: SEQ_PORCELAIN,
+    diverging: DIV_RED_BLUE,
+    accent: '#E8490D',
     rule: true,
   },
   {
